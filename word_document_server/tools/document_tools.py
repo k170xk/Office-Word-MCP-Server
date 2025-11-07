@@ -71,20 +71,39 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
                     # Check all possible header types: primary header, first page header, even page header
                     headers_to_check = []
                     
-                    # Primary header (default)
-                    if section.header:
-                        headers_to_check.append(section.header)
+                    # Primary header (default) - always check this
+                    try:
+                        if section.header:
+                            headers_to_check.append(('primary', section.header))
+                    except:
+                        pass
                     
                     # First page header (if different first page is enabled)
-                    if section.different_first_page_header_footer and section.first_page_header:
-                        headers_to_check.append(section.first_page_header)
+                    try:
+                        if hasattr(section, 'different_first_page_header_footer') and section.different_first_page_header_footer:
+                            if hasattr(section, 'first_page_header') and section.first_page_header:
+                                headers_to_check.append(('first_page', section.first_page_header))
+                    except:
+                        pass
                     
                     # Even page header (if different odd/even is enabled)
-                    if section.different_odd_and_even_pages_header_footer and section.even_page_header:
-                        headers_to_check.append(section.even_page_header)
+                    try:
+                        if hasattr(section, 'different_odd_and_even_pages_header_footer') and section.different_odd_and_even_pages_header_footer:
+                            if hasattr(section, 'even_page_header') and section.even_page_header:
+                                headers_to_check.append(('even_page', section.even_page_header))
+                    except:
+                        pass
+                    
+                    # Also check odd page header if it exists
+                    try:
+                        if hasattr(section, 'different_odd_and_even_pages_header_footer') and section.different_odd_and_even_pages_header_footer:
+                            if hasattr(section, 'header') and section.header:
+                                headers_to_check.append(('odd_page', section.header))
+                    except:
+                        pass
                     
                     # Process all headers
-                    for header in headers_to_check:
+                    for header_name, header in headers_to_check:
                         for paragraph in header.paragraphs:
                             # Replace {Document Title} placeholder
                             if document_title is not None and '{Document Title}' in paragraph.text:
@@ -160,8 +179,10 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
             except Exception as e:
                 # If header replacement fails, log and continue
                 import traceback
-                print(f"Header replacement error: {str(e)}")
+                error_msg = f"Header replacement error: {str(e)}"
+                print(error_msg)
                 traceback.print_exc()
+                # Don't fail the document creation, just continue
                 pass
         
         # Save the document
@@ -288,7 +309,7 @@ async def copy_document(source_filename: str, destination_filename: Optional[str
                         headers_to_check.append(section.even_page_header)
                     
                     # Process all headers
-                    for header in headers_to_check:
+                    for header_name, header in headers_to_check:
                         for paragraph in header.paragraphs:
                             # Replace {Document Title} placeholder
                             if document_title is not None and '{Document Title}' in paragraph.text:
