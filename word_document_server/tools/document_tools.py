@@ -11,6 +11,7 @@ from word_document_server.utils.file_utils import check_file_writeable, ensure_d
 from word_document_server.utils.document_utils import get_document_properties, extract_document_text, get_document_structure, get_document_xml, insert_header_near_text, insert_line_or_paragraph_near_text
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
 from word_document_server.tools.template_tools import get_template_path, template_exists
+from docx.shared import Pt
 
 
 async def create_document(filename: str, title: Optional[str] = None, author: Optional[str] = None, use_template: bool = True) -> str:
@@ -49,6 +50,14 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
         # Ensure necessary styles exist (in case template doesn't have them)
         ensure_heading_style(doc)
         ensure_table_style(doc)
+        
+        # Set default font to Calibri 11
+        try:
+            normal_style = doc.styles['Normal']
+            normal_style.font.name = 'Calibri'
+            normal_style.font.size = Pt(11)
+        except Exception:
+            pass  # If style doesn't exist, continue without error
         
         # Save the document
         doc.save(filename)

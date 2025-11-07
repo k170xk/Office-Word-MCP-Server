@@ -25,7 +25,7 @@ from word_document_server.tools import (
     extended_document_tools,
     comment_tools
 )
-from word_document_server.tools import template_tools
+from word_document_server.tools import template_tools, document_formatting_tools
 from document_manager import get_document_manager
 from storage_adapter import get_storage_adapter
 
@@ -102,6 +102,9 @@ def build_tool_registry():
         'set_template_from_file': template_tools.set_template_from_file,
         'get_template_info': template_tools.get_template_info,
         'clear_template': template_tools.clear_template,
+        'set_default_font': document_formatting_tools.set_default_font,
+        'update_header_title_subtitle': document_formatting_tools.update_header_title_subtitle,
+        'get_header_info': document_formatting_tools.get_header_info,
     }
     
     TOOL_REGISTRY = tools_map
