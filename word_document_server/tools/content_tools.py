@@ -213,10 +213,15 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
                 for i, row_data in enumerate(data):
                     if i >= rows:
                         break
+                    
                     # Ensure row_data is a list
                     if not isinstance(row_data, list):
                         # If it's a string, convert to list with one element
                         row_data = [row_data] if isinstance(row_data, str) else [str(row_data)]
+                    
+                    # Ensure we have enough columns
+                    while len(row_data) < cols:
+                        row_data.append("")
                     
                     for j, cell_text in enumerate(row_data):
                         if j >= cols:
@@ -224,15 +229,26 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
                         try:
                             # Get the cell
                             cell = table.cell(i, j)
-                            # Convert cell_text to string
-                            text_to_add = str(cell_text) if cell_text is not None else ""
+                            
+                            # Convert cell_text to string, handling None and empty values
+                            if cell_text is None:
+                                text_to_add = ""
+                            else:
+                                text_to_add = str(cell_text).strip() if str(cell_text) else ""
                             
                             # Use the simple .text property which is the standard way
-                            # This replaces all content in the cell
+                            # This replaces all content in the cell and handles full strings correctly
                             cell.text = text_to_add
+                            
+                            # Debug: log if text seems truncated (optional, can remove later)
+                            if text_to_add and len(text_to_add) > 50:
+                                print(f"Cell ({i},{j}) filled with {len(text_to_add)} characters")
+                                
                         except Exception as e:
                             # If there's an error with a specific cell, log and continue
                             print(f"Warning: Error setting cell ({i},{j}): {str(e)}")
+                            import traceback
+                            traceback.print_exc()
                             continue
         
         doc.save(filename)
