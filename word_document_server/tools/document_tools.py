@@ -291,22 +291,33 @@ async def copy_document(source_filename: str, destination_filename: Optional[str
         if (document_title is not None or document_subtitle is not None) and new_path:
             try:
                 doc = Document(new_path)
-                if len(doc.sections) > 0:
-                    section = doc.sections[0]
+                # Check all sections (in case document has multiple sections)
+                for section_idx, section in enumerate(doc.sections):
                     # Check all possible header types: primary header, first page header, even page header
                     headers_to_check = []
                     
-                    # Primary header (default)
-                    if section.header:
-                        headers_to_check.append(section.header)
+                    # Primary header (default) - always check this
+                    try:
+                        if section.header:
+                            headers_to_check.append(('primary', section.header))
+                    except:
+                        pass
                     
                     # First page header (if different first page is enabled)
-                    if section.different_first_page_header_footer and section.first_page_header:
-                        headers_to_check.append(section.first_page_header)
+                    try:
+                        if hasattr(section, 'different_first_page_header_footer') and section.different_first_page_header_footer:
+                            if hasattr(section, 'first_page_header') and section.first_page_header:
+                                headers_to_check.append(('first_page', section.first_page_header))
+                    except:
+                        pass
                     
                     # Even page header (if different odd/even is enabled)
-                    if section.different_odd_and_even_pages_header_footer and section.even_page_header:
-                        headers_to_check.append(section.even_page_header)
+                    try:
+                        if hasattr(section, 'different_odd_and_even_pages_header_footer') and section.different_odd_and_even_pages_header_footer:
+                            if hasattr(section, 'even_page_header') and section.even_page_header:
+                                headers_to_check.append(('even_page', section.even_page_header))
+                    except:
+                        pass
                     
                     # Process all headers
                     for header_name, header in headers_to_check:
