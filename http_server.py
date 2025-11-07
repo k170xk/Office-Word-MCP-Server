@@ -2,6 +2,7 @@
 """
 HTTP server wrapper for Office Word MCP Server.
 Provides OpenAI-compatible JSON-RPC endpoints and document serving.
+Force deploy: 2025-11-07
 """
 
 import os
