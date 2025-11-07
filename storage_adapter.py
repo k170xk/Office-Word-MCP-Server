@@ -4,8 +4,6 @@ Supports multiple backends: S3, Render Disk, and local filesystem.
 """
 
 import os
-import boto3
-from botocore.exceptions import ClientError
 from typing import Optional, BinaryIO
 import tempfile
 import shutil
@@ -28,6 +26,16 @@ class StorageAdapter:
     
     def _init_s3(self):
         """Initialize S3 storage."""
+        try:
+            import boto3
+            from botocore.exceptions import ClientError
+        except ImportError:
+            print("Warning: boto3 not installed. Install with: pip install boto3")
+            print("Falling back to local storage")
+            self.storage_type = 'local'
+            self._init_local()
+            return
+        
         self.s3_bucket = os.getenv('S3_BUCKET_NAME')
         self.s3_region = os.getenv('S3_REGION', 'us-east-1')
         self.s3_access_key = os.getenv('AWS_ACCESS_KEY_ID')
@@ -95,6 +103,7 @@ class StorageAdapter:
                 local_path = os.path.join(tempfile.gettempdir(), filename)
             
             try:
+                from botocore.exceptions import ClientError
                 self.s3_client.download_file(self.s3_bucket, filename, local_path)
                 return local_path
             except ClientError as e:
@@ -126,6 +135,7 @@ class StorageAdapter:
         """
         if self.storage_type == 's3':
             try:
+                from botocore.exceptions import ClientError
                 self.s3_client.upload_file(local_path, self.s3_bucket, filename)
                 # Return public URL if bucket is public, otherwise return S3 path
                 if self.base_url:
@@ -153,6 +163,7 @@ class StorageAdapter:
         """Check if a document exists in storage."""
         if self.storage_type == 's3':
             try:
+                from botocore.exceptions import ClientError
                 self.s3_client.head_object(Bucket=self.s3_bucket, Key=filename)
                 return True
             except ClientError as e:
@@ -170,6 +181,7 @@ class StorageAdapter:
         """Delete a document from storage."""
         if self.storage_type == 's3':
             try:
+                from botocore.exceptions import ClientError
                 self.s3_client.delete_object(Bucket=self.s3_bucket, Key=filename)
                 return True
             except ClientError as e:
