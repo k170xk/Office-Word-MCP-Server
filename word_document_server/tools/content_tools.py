@@ -258,6 +258,7 @@ async def add_picture(filename: str, image_path: str, width: Optional[float] = N
     # Check if image_path is a URL
     is_url = image_path.startswith('http://') or image_path.startswith('https://')
     temp_file = None
+    temp_path = None
     
     try:
         if is_url:
@@ -331,13 +332,13 @@ async def add_picture(filename: str, image_path: str, width: Optional[float] = N
             error_type = type(outer_error).__name__
             error_msg = str(outer_error)
             return f"Document processing error: {error_type} - {error_msg or 'No error details available'}"
-        finally:
-            # Clean up temporary file if we downloaded from URL
-            if is_url and temp_file and 'temp_path' in locals() and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass  # Ignore cleanup errors
+    finally:
+        # Clean up temporary file if we downloaded from URL
+        if is_url and temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except:
+                pass  # Ignore cleanup errors
 
 
 async def add_page_break(filename: str) -> str:
