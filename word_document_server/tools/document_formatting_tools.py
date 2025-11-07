@@ -11,7 +11,7 @@ from docx.enum.style import WD_STYLE_TYPE
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension
 
 
-async def set_default_font(filename: str, font_name: str = "Calibri", font_size: int = 11) -> str:
+async def set_default_font(filename: str, font_name: str = "Calibri", font_size: int = 11, apply_to_existing: bool = True) -> str:
     """
     Set the default font for the entire document.
     This affects the Normal style and all paragraphs that use it.
@@ -20,6 +20,7 @@ async def set_default_font(filename: str, font_name: str = "Calibri", font_size:
         filename: Path to the Word document
         font_name: Font family name (default: Calibri)
         font_size: Font size in points (default: 11)
+        apply_to_existing: If True, apply font to existing paragraphs (default: True)
     """
     filename = ensure_docx_extension(filename)
     
@@ -46,13 +47,14 @@ async def set_default_font(filename: str, font_name: str = "Calibri", font_size:
         font.size = Pt(font_size)
         
         # Also update all existing paragraphs that use Normal style
-        for paragraph in doc.paragraphs:
-            if paragraph.style.name == 'Normal' or paragraph.style.name.startswith('Normal'):
-                for run in paragraph.runs:
-                    if not run.font.name or run.font.name == 'None':
-                        run.font.name = font_name
-                    if not run.font.size or run.font.size is None:
-                        run.font.size = Pt(font_size)
+        if apply_to_existing:
+            for paragraph in doc.paragraphs:
+                if paragraph.style.name == 'Normal' or paragraph.style.name.startswith('Normal'):
+                    for run in paragraph.runs:
+                        if not run.font.name or run.font.name == 'None':
+                            run.font.name = font_name
+                        if not run.font.size or run.font.size is None:
+                            run.font.size = Pt(font_size)
         
         # Save the document
         doc.save(filename)
