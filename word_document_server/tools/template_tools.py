@@ -10,7 +10,8 @@ from word_document_server.utils.file_utils import ensure_docx_extension
 
 
 TEMPLATE_FILENAME = '.template.docx'
-TEMPLATE_DIR = os.getenv('TEMPLATE_DIR', '/mnt/disk/documents')
+# Use the same storage directory as documents
+TEMPLATE_DIR = os.getenv('DISK_PATH', os.getenv('DOCUMENTS_DIR', '/mnt/disk/documents'))
 
 
 def get_template_path() -> str:

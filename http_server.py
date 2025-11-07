@@ -161,6 +161,17 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
         
+        # Template info endpoint
+        elif path == '/template/info':
+            try:
+                info = asyncio.run(template_tools.get_template_info())
+                self.send_response(200)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"info": info}).encode('utf-8'))
+            except Exception as e:
+                self.send_error(500, f"Error: {str(e)}")
+        
         else:
             self.send_error(404, "Not found")
     
@@ -507,6 +518,86 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self.send_error(500, f"Error serving document: {str(e)}")
+    
+    def handle_template_upload(self):
+        """Handle template file upload."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                self.send_error(400, "No file data received")
+                return
+            
+            content_type = self.headers.get('Content-Type', '')
+            
+            # Handle raw binary upload (application/octet-stream or Word document MIME type)
+            if 'multipart' not in content_type.lower():
+                # Read the file data directly
+                file_data = self.rfile.read(content_length)
+                
+                # Save as template
+                template_path = template_tools.get_template_path()
+                os.makedirs(os.path.dirname(template_path), exist_ok=True)
+                
+                with open(template_path, 'wb') as f:
+                    f.write(file_data)
+                
+                self.send_response(200)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "message": "Template uploaded successfully",
+                    "template_path": template_path,
+                    "size_bytes": len(file_data)
+                }).encode('utf-8'))
+                return
+            
+            # Handle multipart/form-data
+            import cgi
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': content_type}
+            )
+            
+            if 'file' not in form:
+                self.send_error(400, "No file field in form data. Use field name 'file'")
+                return
+            
+            file_item = form['file']
+            if not file_item.filename:
+                self.send_error(400, "No filename provided")
+                return
+            
+            # Save the uploaded file as template
+            template_path = template_tools.get_template_path()
+            os.makedirs(os.path.dirname(template_path), exist_ok=True)
+            
+            if hasattr(file_item, 'file'):
+                # File-like object
+                with open(template_path, 'wb') as f:
+                    f.write(file_item.file.read())
+            else:
+                # String data
+                with open(template_path, 'wb') as f:
+                    if isinstance(file_item.value, bytes):
+                        f.write(file_item.value)
+                    else:
+                        f.write(file_item.value.encode('utf-8'))
+            
+            self.send_response(200)
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": True,
+                "message": f"Template '{file_item.filename}' uploaded successfully",
+                "template_path": template_path
+            }).encode('utf-8'))
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.send_error(500, f"Error uploading template: {str(e)}")
     
     def log_message(self, format, *args):
         """Override to use print instead of stderr."""
