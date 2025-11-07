@@ -562,35 +562,35 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                 return
             
             # Handle multipart/form-data
-            import cgi
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': content_type}
-            )
+            # Parse multipart/form-data manually (cgi module removed in Python 3.13+)
+            boundary = content_type.split('boundary=')[1].strip()
+            data = self.rfile.read(content_length)
             
-            if 'file' not in form:
+            # Find the file data between boundaries
+            parts = data.split(b'--' + boundary.encode())
+            file_data = None
+            
+            for part in parts:
+                if b'Content-Disposition: form-data; name="file"' in part:
+                    # Extract file data (after headers and blank line)
+                    file_start = part.find(b'\r\n\r\n')
+                    if file_start != -1:
+                        file_data = part[file_start + 4:]
+                        # Remove trailing boundary markers
+                        file_data = file_data.rstrip(b'\r\n--')
+                        break
+            
+            if file_data is None:
                 self.send_error(400, "No file field in form data. Use field name 'file'")
-                return
-            
-            file_item = form['file']
-            if not file_item.filename:
-                self.send_error(400, "No filename provided")
                 return
             
             # Save the uploaded file as template
             template_path = template_tools.get_template_path()
             os.makedirs(os.path.dirname(template_path), exist_ok=True)
             
-            if hasattr(file_item, 'file'):
-                # File-like object
-                with open(template_path, 'wb') as f:
-                    f.write(file_item.file.read())
-            else:
-                # String data
-                with open(template_path, 'wb') as f:
-                    if isinstance(file_item.value, bytes):
-                        f.write(file_item.value)
+            # Write the file data directly (already extracted from multipart)
+            with open(template_path, 'wb') as f:
+                f.write(file_data)
                     else:
                         f.write(file_item.value.encode('utf-8'))
             
