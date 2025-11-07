@@ -14,7 +14,9 @@ from word_document_server.tools.template_tools import get_template_path, templat
 from docx.shared import Pt
 
 
-async def create_document(filename: str, title: Optional[str] = None, author: Optional[str] = None, use_template: bool = True) -> str:
+async def create_document(filename: str, title: Optional[str] = None, author: Optional[str] = None, 
+                         use_template: bool = True, document_title: Optional[str] = None, 
+                         document_subtitle: Optional[str] = None) -> str:
     """Create a new Word document with optional metadata.
     
     Args:
@@ -22,6 +24,8 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
         title: Optional title for the document metadata
         author: Optional author for the document metadata
         use_template: If True (default), use the template if available
+        document_title: Optional title to replace {Document Title} placeholder in header
+        document_subtitle: Optional subtitle to replace {Document Subtitle} placeholder in header
     """
     filename = ensure_docx_extension(filename)
     
@@ -59,11 +63,101 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
         except Exception:
             pass  # If style doesn't exist, continue without error
         
+        # Replace header placeholders if provided
+        if document_title is not None or document_subtitle is not None:
+            try:
+                if len(doc.sections) > 0:
+                    header = doc.sections[0].header
+                    for paragraph in header.paragraphs:
+                        # Replace {Document Title} placeholder
+                        if document_title is not None and '{Document Title}' in paragraph.text:
+                            # Clear and rebuild the paragraph
+                            original_runs = []
+                            for run in paragraph.runs:
+                                original_runs.append({
+                                    'text': run.text,
+                                    'bold': run.bold,
+                                    'italic': run.italic,
+                                    'font_name': run.font.name,
+                                    'font_size': run.font.size
+                                })
+                            
+                            # Replace text
+                            new_text = paragraph.text.replace('{Document Title}', document_title)
+                            paragraph.clear()
+                            
+                            # Recreate runs with formatting
+                            if original_runs:
+                                first_run = original_runs[0]
+                                run = paragraph.add_run(new_text)
+                                run.bold = first_run.get('bold', False)
+                                run.italic = first_run.get('italic', False)
+                                if first_run.get('font_name'):
+                                    run.font.name = first_run['font_name']
+                                if first_run.get('font_size'):
+                                    run.font.size = first_run['font_size']
+                                else:
+                                    run.font.name = 'Calibri'
+                                    run.font.size = Pt(11)
+                                    run.bold = True
+                            else:
+                                run = paragraph.add_run(new_text)
+                                run.font.name = 'Calibri'
+                                run.font.size = Pt(11)
+                                run.bold = True
+                        
+                        # Replace {Document Subtitle} placeholder
+                        if document_subtitle is not None and '{Document Subtitle}' in paragraph.text:
+                            # Clear and rebuild the paragraph
+                            original_runs = []
+                            for run in paragraph.runs:
+                                original_runs.append({
+                                    'text': run.text,
+                                    'bold': run.bold,
+                                    'italic': run.italic,
+                                    'font_name': run.font.name,
+                                    'font_size': run.font.size
+                                })
+                            
+                            # Replace text
+                            new_text = paragraph.text.replace('{Document Subtitle}', document_subtitle)
+                            paragraph.clear()
+                            
+                            # Recreate runs with formatting
+                            if original_runs:
+                                first_run = original_runs[0]
+                                run = paragraph.add_run(new_text)
+                                run.bold = first_run.get('bold', False)
+                                run.italic = first_run.get('italic', False)
+                                if first_run.get('font_name'):
+                                    run.font.name = first_run['font_name']
+                                if first_run.get('font_size'):
+                                    run.font.size = first_run['font_size']
+                                else:
+                                    run.font.name = 'Calibri'
+                                    run.font.size = Pt(11)
+                            else:
+                                run = paragraph.add_run(new_text)
+                                run.font.name = 'Calibri'
+                                run.font.size = Pt(11)
+            except Exception as e:
+                # If header replacement fails, continue anyway
+                pass
+        
         # Save the document
         doc.save(filename)
         
         template_note = " (using template)" if (use_template and template_exists()) else ""
-        return f"Document {filename} created successfully{template_note}"
+        header_note = ""
+        if document_title is not None or document_subtitle is not None:
+            parts = []
+            if document_title is not None:
+                parts.append(f"title: '{document_title}'")
+            if document_subtitle is not None:
+                parts.append(f"subtitle: '{document_subtitle}'")
+            header_note = f" (header updated: {', '.join(parts)})"
+        
+        return f"Document {filename} created successfully{template_note}{header_note}"
     except Exception as e:
         return f"Failed to create document: {str(e)}"
 
@@ -135,12 +229,15 @@ async def list_available_documents(directory: str = ".") -> str:
         return f"Failed to list documents: {str(e)}"
 
 
-async def copy_document(source_filename: str, destination_filename: Optional[str] = None) -> str:
-    """Create a copy of a Word document.
+async def copy_document(source_filename: str, destination_filename: Optional[str] = None, 
+                        document_title: Optional[str] = None, document_subtitle: Optional[str] = None) -> str:
+    """Create a copy of a Word document with optional header placeholder replacement.
     
     Args:
         source_filename: Path to the source document
         destination_filename: Optional path for the copy. If not provided, a default name will be generated.
+        document_title: Optional title to replace {Document Title} placeholder in header
+        document_subtitle: Optional subtitle to replace {Document Subtitle} placeholder in header
     """
     source_filename = ensure_docx_extension(source_filename)
     
@@ -149,6 +246,91 @@ async def copy_document(source_filename: str, destination_filename: Optional[str
     
     success, message, new_path = create_document_copy(source_filename, destination_filename)
     if success:
+        # Replace header placeholders if provided
+        if (document_title is not None or document_subtitle is not None) and new_path:
+            try:
+                doc = Document(new_path)
+                if len(doc.sections) > 0:
+                    header = doc.sections[0].header
+                    for paragraph in header.paragraphs:
+                        # Replace {Document Title} placeholder
+                        if document_title is not None and '{Document Title}' in paragraph.text:
+                            original_runs = []
+                            for run in paragraph.runs:
+                                original_runs.append({
+                                    'text': run.text,
+                                    'bold': run.bold,
+                                    'italic': run.italic,
+                                    'font_name': run.font.name,
+                                    'font_size': run.font.size
+                                })
+                            
+                            new_text = paragraph.text.replace('{Document Title}', document_title)
+                            paragraph.clear()
+                            
+                            if original_runs:
+                                first_run = original_runs[0]
+                                run = paragraph.add_run(new_text)
+                                run.bold = first_run.get('bold', False)
+                                run.italic = first_run.get('italic', False)
+                                if first_run.get('font_name'):
+                                    run.font.name = first_run['font_name']
+                                if first_run.get('font_size'):
+                                    run.font.size = first_run['font_size']
+                                else:
+                                    run.font.name = 'Calibri'
+                                    run.font.size = Pt(11)
+                                    run.bold = True
+                            else:
+                                run = paragraph.add_run(new_text)
+                                run.font.name = 'Calibri'
+                                run.font.size = Pt(11)
+                                run.bold = True
+                        
+                        # Replace {Document Subtitle} placeholder
+                        if document_subtitle is not None and '{Document Subtitle}' in paragraph.text:
+                            original_runs = []
+                            for run in paragraph.runs:
+                                original_runs.append({
+                                    'text': run.text,
+                                    'bold': run.bold,
+                                    'italic': run.italic,
+                                    'font_name': run.font.name,
+                                    'font_size': run.font.size
+                                })
+                            
+                            new_text = paragraph.text.replace('{Document Subtitle}', document_subtitle)
+                            paragraph.clear()
+                            
+                            if original_runs:
+                                first_run = original_runs[0]
+                                run = paragraph.add_run(new_text)
+                                run.bold = first_run.get('bold', False)
+                                run.italic = first_run.get('italic', False)
+                                if first_run.get('font_name'):
+                                    run.font.name = first_run['font_name']
+                                if first_run.get('font_size'):
+                                    run.font.size = first_run['font_size']
+                                else:
+                                    run.font.name = 'Calibri'
+                                    run.font.size = Pt(11)
+                            else:
+                                run = paragraph.add_run(new_text)
+                                run.font.name = 'Calibri'
+                                run.font.size = Pt(11)
+                
+                doc.save(new_path)
+                
+                if document_title is not None or document_subtitle is not None:
+                    parts = []
+                    if document_title is not None:
+                        parts.append(f"title: '{document_title}'")
+                    if document_subtitle is not None:
+                        parts.append(f"subtitle: '{document_subtitle}'")
+                    message += f" (header updated: {', '.join(parts)})"
+            except Exception:
+                pass  # If header replacement fails, continue anyway
+        
         return message
     else:
         return f"Failed to copy document: {message}"
