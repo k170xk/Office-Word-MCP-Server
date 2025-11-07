@@ -245,8 +245,7 @@ async def get_document_outline(filename: str) -> str:
 
 
 async def list_available_documents(directory: Optional[str] = None) -> str:
-    """List all files in the storage directory (disk or documents folder).
-    Shows both .docx files and other files with their sizes.
+    """List all .docx files in the storage directory (templates and created documents).
     
     Args:
         directory: Optional directory path. If not provided, uses the storage directory from environment.
@@ -261,38 +260,24 @@ async def list_available_documents(directory: Optional[str] = None) -> str:
         if not os.path.exists(storage_dir):
             return f"Storage directory {storage_dir} does not exist"
         
-        # List all files in the directory
+        # List only .docx files (templates and created documents)
         all_files = os.listdir(storage_dir)
         docx_files = [f for f in all_files if f.endswith('.docx')]
-        other_files = [f for f in all_files if not f.endswith('.docx') and os.path.isfile(os.path.join(storage_dir, f))]
         
-        result_parts = [f"Storage directory: {storage_dir}\n"]
+        if not docx_files:
+            return f"No Word documents found in {storage_dir}"
         
-        if docx_files:
-            docx_files.sort()
-            result_parts.append(f"\nWord documents ({len(docx_files)}):")
-            for file in docx_files:
-                file_path = os.path.join(storage_dir, file)
-                try:
-                    size = os.path.getsize(file_path) / 1024  # KB
-                    result_parts.append(f"  - {file} ({size:.2f} KB)")
-                except:
-                    result_parts.append(f"  - {file}")
-        else:
-            result_parts.append("\nNo Word documents found")
+        docx_files.sort()
+        result = f"Found {len(docx_files)} Word document(s) in {storage_dir}:\n"
+        for file in docx_files:
+            file_path = os.path.join(storage_dir, file)
+            try:
+                size = os.path.getsize(file_path) / 1024  # KB
+                result += f"- {file} ({size:.2f} KB)\n"
+            except:
+                result += f"- {file}\n"
         
-        if other_files:
-            other_files.sort()
-            result_parts.append(f"\nOther files ({len(other_files)}):")
-            for file in other_files:
-                file_path = os.path.join(storage_dir, file)
-                try:
-                    size = os.path.getsize(file_path) / 1024  # KB
-                    result_parts.append(f"  - {file} ({size:.2f} KB)")
-                except:
-                    result_parts.append(f"  - {file}")
-        
-        return "\n".join(result_parts)
+        return result
     except Exception as e:
         return f"Failed to list documents: {str(e)}"
 
