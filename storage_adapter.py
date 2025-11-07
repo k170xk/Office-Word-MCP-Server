@@ -15,7 +15,8 @@ class StorageAdapter:
     """Abstract storage adapter for document persistence."""
     
     def __init__(self):
-        self.storage_type = os.getenv('STORAGE_TYPE', 'local').lower()
+        # Default to 'disk' for Render persistent storage (no external setup needed)
+        self.storage_type = os.getenv('STORAGE_TYPE', 'disk').lower()
         self.base_url = os.getenv('BASE_URL', '')
         
         if self.storage_type == 's3':
@@ -55,10 +56,18 @@ class StorageAdapter:
     
     def _init_disk(self):
         """Initialize Render Disk storage."""
+        # Render mounts persistent disks at /mnt/disk by default
         disk_path = os.getenv('DISK_PATH', '/mnt/disk/documents')
-        os.makedirs(disk_path, exist_ok=True)
-        self.disk_path = disk_path
-        print(f"Render Disk storage initialized: path={disk_path}")
+        try:
+            os.makedirs(disk_path, exist_ok=True)
+            self.disk_path = disk_path
+            print(f"Render Disk storage initialized: path={disk_path}")
+        except PermissionError:
+            # If /mnt/disk doesn't exist (no disk attached), fall back to local
+            print("Warning: Render Disk not available, falling back to local storage")
+            print("To enable persistent storage, attach a disk in Render dashboard")
+            self.storage_type = 'local'
+            self._init_local()
     
     def _init_local(self):
         """Initialize local filesystem storage."""
