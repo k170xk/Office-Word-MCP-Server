@@ -205,13 +205,32 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
         
         # Fill table with data if provided
         if data:
-            for i, row_data in enumerate(data):
-                if i >= rows:
-                    break
-                for j, cell_text in enumerate(row_data):
-                    if j >= cols:
+            # Handle both list of lists and other formats
+            if isinstance(data, list) and len(data) > 0:
+                for i, row_data in enumerate(data):
+                    if i >= rows:
                         break
-                    table.cell(i, j).text = str(cell_text)
+                    # Ensure row_data is a list
+                    if not isinstance(row_data, list):
+                        # If it's a string, convert to list with one element
+                        row_data = [row_data] if isinstance(row_data, str) else [str(row_data)]
+                    
+                    for j, cell_text in enumerate(row_data):
+                        if j >= cols:
+                            break
+                        try:
+                            # Get the cell
+                            cell = table.cell(i, j)
+                            # Clear existing content
+                            cell.paragraphs[0].clear()
+                            # Add new text as a run
+                            text_to_add = str(cell_text) if cell_text is not None else ""
+                            if text_to_add:
+                                cell.paragraphs[0].add_run(text_to_add)
+                        except Exception as e:
+                            # If there's an error with a specific cell, log and continue
+                            print(f"Warning: Error setting cell ({i},{j}): {str(e)}")
+                            continue
         
         doc.save(filename)
         return f"Table ({rows}x{cols}) added to {filename}"
