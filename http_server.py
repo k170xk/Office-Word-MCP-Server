@@ -296,12 +296,27 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                     
                     # Upload document back to storage if it was modified
                     if local_path and os.path.exists(local_path):
-                        filename_base = os.path.basename(original_filename or arguments.get('filename', ''))
+                        # Get the original filename (before we changed it to local_path)
+                        if original_filename:
+                            filename_base = os.path.basename(original_filename)
+                        else:
+                            # Extract from arguments
+                            filename_base = os.path.basename(arguments.get('filename', ''))
+                        
+                        # Ensure .docx extension
+                        if filename_base and not filename_base.endswith('.docx'):
+                            filename_base = f"{filename_base}.docx"
+                        
                         if filename_base:
+                            # Save to storage
                             doc_url = manager.save_document(local_path, filename_base)
                             # Enhance result with URL
                             if isinstance(result, str):
-                                result = f"{result}\n\nDocument URL: {doc_url}\nDownload URL: {doc_url}"
+                                from urllib.parse import quote
+                                # URL encode the filename for the download URL
+                                encoded_filename = quote(filename_base)
+                                download_url = f"{BASE_URL or 'https://office-word-mcp.onrender.com'}/documents/{encoded_filename}"
+                                result = f"{result}\n\nDocument saved: {filename_base}\nDownload URL: {download_url}"
                     
                     enhanced_result = str(result)
                 finally:
@@ -446,6 +461,10 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
     
     def serve_document(self, filename: str):
         """Serve a document file from storage."""
+        from urllib.parse import unquote
+        
+        # URL decode the filename (handle %20 for spaces, etc.)
+        filename = unquote(filename)
         # Security: prevent directory traversal
         filename = os.path.basename(filename)
         
@@ -453,8 +472,17 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             storage = get_storage_adapter()
             manager = get_document_manager()
             
+            # Check if document exists in storage first
+            if not storage.document_exists(filename):
+                self.send_error(404, f"Document '{filename}' not found")
+                return
+            
             # Download from storage to temp location
             local_path = manager.get_local_path(filename, create_if_missing=False)
+            
+            if not os.path.exists(local_path):
+                self.send_error(404, f"Document '{filename}' not found on disk")
+                return
             
             with open(local_path, 'rb') as f:
                 content = f.read()
@@ -469,9 +497,11 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             
             # Cleanup temp file
             manager.cleanup_temp(filename)
-        except FileNotFoundError:
-            self.send_error(404, "Document not found")
+        except FileNotFoundError as e:
+            self.send_error(404, f"Document not found: {str(e)}")
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.send_error(500, f"Error serving document: {str(e)}")
     
     def log_message(self, format, *args):
