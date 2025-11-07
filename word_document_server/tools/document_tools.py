@@ -67,8 +67,25 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
         if document_title is not None or document_subtitle is not None:
             try:
                 if len(doc.sections) > 0:
-                    header = doc.sections[0].header
-                    for paragraph in header.paragraphs:
+                    section = doc.sections[0]
+                    # Check all possible header types: primary header, first page header, even page header
+                    headers_to_check = []
+                    
+                    # Primary header (default)
+                    if section.header:
+                        headers_to_check.append(section.header)
+                    
+                    # First page header (if different first page is enabled)
+                    if section.different_first_page_header_footer and section.first_page_header:
+                        headers_to_check.append(section.first_page_header)
+                    
+                    # Even page header (if different odd/even is enabled)
+                    if section.different_odd_and_even_pages_header_footer and section.even_page_header:
+                        headers_to_check.append(section.even_page_header)
+                    
+                    # Process all headers
+                    for header in headers_to_check:
+                        for paragraph in header.paragraphs:
                         # Replace {Document Title} placeholder
                         if document_title is not None and '{Document Title}' in paragraph.text:
                             # Clear and rebuild the paragraph
@@ -141,7 +158,10 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
                                 run.font.name = 'Calibri'
                                 run.font.size = Pt(11)
             except Exception as e:
-                # If header replacement fails, continue anyway
+                # If header replacement fails, log and continue
+                import traceback
+                print(f"Header replacement error: {str(e)}")
+                traceback.print_exc()
                 pass
         
         # Save the document
@@ -251,44 +271,61 @@ async def copy_document(source_filename: str, destination_filename: Optional[str
             try:
                 doc = Document(new_path)
                 if len(doc.sections) > 0:
-                    header = doc.sections[0].header
-                    for paragraph in header.paragraphs:
-                        # Replace {Document Title} placeholder
-                        if document_title is not None and '{Document Title}' in paragraph.text:
-                            original_runs = []
-                            for run in paragraph.runs:
-                                original_runs.append({
-                                    'text': run.text,
-                                    'bold': run.bold,
-                                    'italic': run.italic,
-                                    'font_name': run.font.name,
-                                    'font_size': run.font.size
-                                })
-                            
-                            new_text = paragraph.text.replace('{Document Title}', document_title)
-                            paragraph.clear()
-                            
-                            if original_runs:
-                                first_run = original_runs[0]
-                                run = paragraph.add_run(new_text)
-                                run.bold = first_run.get('bold', False)
-                                run.italic = first_run.get('italic', False)
-                                if first_run.get('font_name'):
-                                    run.font.name = first_run['font_name']
-                                if first_run.get('font_size'):
-                                    run.font.size = first_run['font_size']
+                    section = doc.sections[0]
+                    # Check all possible header types: primary header, first page header, even page header
+                    headers_to_check = []
+                    
+                    # Primary header (default)
+                    if section.header:
+                        headers_to_check.append(section.header)
+                    
+                    # First page header (if different first page is enabled)
+                    if section.different_first_page_header_footer and section.first_page_header:
+                        headers_to_check.append(section.first_page_header)
+                    
+                    # Even page header (if different odd/even is enabled)
+                    if section.different_odd_and_even_pages_header_footer and section.even_page_header:
+                        headers_to_check.append(section.even_page_header)
+                    
+                    # Process all headers
+                    for header in headers_to_check:
+                        for paragraph in header.paragraphs:
+                            # Replace {Document Title} placeholder
+                            if document_title is not None and '{Document Title}' in paragraph.text:
+                                original_runs = []
+                                for run in paragraph.runs:
+                                    original_runs.append({
+                                        'text': run.text,
+                                        'bold': run.bold,
+                                        'italic': run.italic,
+                                        'font_name': run.font.name,
+                                        'font_size': run.font.size
+                                    })
+                                
+                                new_text = paragraph.text.replace('{Document Title}', document_title)
+                                paragraph.clear()
+                                
+                                if original_runs:
+                                    first_run = original_runs[0]
+                                    run = paragraph.add_run(new_text)
+                                    run.bold = first_run.get('bold', False)
+                                    run.italic = first_run.get('italic', False)
+                                    if first_run.get('font_name'):
+                                        run.font.name = first_run['font_name']
+                                    if first_run.get('font_size'):
+                                        run.font.size = first_run['font_size']
+                                    else:
+                                        run.font.name = 'Calibri'
+                                        run.font.size = Pt(11)
+                                        run.bold = True
                                 else:
+                                    run = paragraph.add_run(new_text)
                                     run.font.name = 'Calibri'
                                     run.font.size = Pt(11)
                                     run.bold = True
-                            else:
-                                run = paragraph.add_run(new_text)
-                                run.font.name = 'Calibri'
-                                run.font.size = Pt(11)
-                                run.bold = True
-                        
-                        # Replace {Document Subtitle} placeholder
-                        if document_subtitle is not None and '{Document Subtitle}' in paragraph.text:
+                            
+                            # Replace {Document Subtitle} placeholder
+                            if document_subtitle is not None and '{Document Subtitle}' in paragraph.text:
                             original_runs = []
                             for run in paragraph.runs:
                                 original_runs.append({
