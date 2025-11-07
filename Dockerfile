@@ -18,5 +18,6 @@ COPY . /app
 # Install Python dependencies
 RUN pip install --no-cache-dir .
 
-# Default command
-ENTRYPOINT ["word_mcp_server"]
+# Default command - use HTTP server for Render deployment
+# Set PORT environment variable to use HTTP mode
+ENTRYPOINT ["python", "http_server.py"]

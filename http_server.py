@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""
+HTTP server wrapper for Office Word MCP Server.
+Provides OpenAI-compatible JSON-RPC endpoints and document serving.
+"""
+
+import os
+import json
+import asyncio
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse
+import sys
+import inspect
+
+# Add the project root to the path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import all tool functions directly
+from word_document_server.tools import (
+    document_tools,
+    content_tools,
+    format_tools,
+    protection_tools,
+    footnote_tools,
+    extended_document_tools,
+    comment_tools
+)
+
+# Document storage directory
+DOCUMENTS_DIR = os.getenv('DOCUMENTS_DIR', './documents')
+BASE_URL = os.getenv('BASE_URL', '')  # Will be set from Render service URL
+
+# Ensure documents directory exists
+os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+
+# Build tool registry by inspecting all tool modules
+TOOL_REGISTRY = {}
+
+def build_tool_registry():
+    """Build a registry of all available tools."""
+    global TOOL_REGISTRY
+    
+    # Map of tool names to their functions
+    tools_map = {
+        'create_document': document_tools.create_document,
+        'copy_document': document_tools.copy_document,
+        'get_document_info': document_tools.get_document_info,
+        'get_document_text': document_tools.get_document_text,
+        'get_document_outline': document_tools.get_document_outline,
+        'list_available_documents': document_tools.list_available_documents,
+        'get_document_xml': document_tools.get_document_xml_tool,
+        'insert_header_near_text': content_tools.insert_header_near_text_tool,
+        'insert_line_or_paragraph_near_text': content_tools.insert_line_or_paragraph_near_text_tool,
+        'insert_numbered_list_near_text': content_tools.insert_numbered_list_near_text_tool,
+        'add_paragraph': content_tools.add_paragraph,
+        'add_heading': content_tools.add_heading,
+        'add_picture': content_tools.add_picture,
+        'add_table': content_tools.add_table,
+        'add_page_break': content_tools.add_page_break,
+        'delete_paragraph': content_tools.delete_paragraph,
+        'search_and_replace': content_tools.search_and_replace,
+        'create_custom_style': format_tools.create_custom_style,
+        'format_text': format_tools.format_text,
+        'format_table': format_tools.format_table,
+        'set_table_cell_shading': format_tools.set_table_cell_shading,
+        'apply_table_alternating_rows': format_tools.apply_table_alternating_rows,
+        'highlight_table_header': format_tools.highlight_table_header,
+        'merge_table_cells': format_tools.merge_table_cells,
+        'merge_table_cells_horizontal': format_tools.merge_table_cells_horizontal,
+        'merge_table_cells_vertical': format_tools.merge_table_cells_vertical,
+        'set_table_cell_alignment': format_tools.set_table_cell_alignment,
+        'set_table_alignment_all': format_tools.set_table_alignment_all,
+        'protect_document': protection_tools.protect_document,
+        'unprotect_document': protection_tools.unprotect_document,
+        'add_footnote_to_document': footnote_tools.add_footnote_to_document,
+        'add_footnote_after_text': footnote_tools.add_footnote_after_text,
+        'add_footnote_before_text': footnote_tools.add_footnote_before_text,
+        'add_footnote_enhanced': footnote_tools.add_footnote_enhanced,
+        'add_endnote_to_document': footnote_tools.add_endnote_to_document,
+        'customize_footnote_style': footnote_tools.customize_footnote_style,
+        'delete_footnote_from_document': footnote_tools.delete_footnote_from_document,
+        'add_footnote_robust': footnote_tools.add_footnote_robust_tool,
+        'validate_document_footnotes': footnote_tools.validate_footnotes_tool,
+        'delete_footnote_robust': footnote_tools.delete_footnote_robust_tool,
+        'get_paragraph_text_from_document': extended_document_tools.get_paragraph_text_from_document,
+        'find_text_in_document': extended_document_tools.find_text_in_document,
+        'convert_to_pdf': extended_document_tools.convert_to_pdf,
+        'get_all_comments': comment_tools.get_all_comments,
+        'get_comments_by_author': comment_tools.get_comments_by_author,
+        'get_comments_for_paragraph': comment_tools.get_comments_for_paragraph,
+        'set_table_column_width': format_tools.set_table_column_width,
+        'set_table_column_widths': format_tools.set_table_column_widths,
+        'set_table_width': format_tools.set_table_width,
+        'auto_fit_table_columns': format_tools.auto_fit_table_columns,
+        'format_table_cell_text': format_tools.format_table_cell_text,
+        'set_table_cell_padding': format_tools.set_table_cell_padding,
+        'replace_paragraph_block_below_header': content_tools.replace_paragraph_block_below_header_tool,
+        'replace_block_between_manual_anchors': content_tools.replace_block_between_manual_anchors_tool,
+    }
+    
+    TOOL_REGISTRY = tools_map
+
+# Build registry on import
+build_tool_registry()
+
+
+class MCPHTTPHandler(BaseHTTPRequestHandler):
+    """HTTP handler for MCP JSON-RPC requests and document serving."""
+    
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests."""
+        self.send_response(200)
+        self.send_cors_headers()
+        self.end_headers()
+    
+    def send_cors_headers(self):
+        """Send CORS headers."""
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Content-Type', 'application/json')
+    
+    def do_GET(self):
+        """Handle GET requests for tool discovery and document serving."""
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        
+        # Tool discovery endpoint
+        if path == '/mcp/stream' or path == '/mcp/tools':
+            try:
+                request = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list",
+                    "params": {}
+                }
+                response = asyncio.run(self.handle_mcp_request(request))
+                
+                self.send_response(200)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+            except Exception as e:
+                self.send_error(500, f"Error: {str(e)}")
+        
+        # Document serving endpoint
+        elif path.startswith('/documents/'):
+            filename = path.replace('/documents/', '')
+            self.serve_document(filename)
+        
+        # Health check
+        elif path == '/health':
+            self.send_response(200)
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
+        
+        else:
+            self.send_error(404, "Not found")
+    
+    def do_POST(self):
+        """Handle POST requests for MCP tool calls."""
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        
+        if path == '/mcp/stream':
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            
+            try:
+                request = json.loads(body)
+                response = asyncio.run(self.handle_mcp_request(request))
+                
+                self.send_response(200)
+                self.send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+            except json.JSONDecodeError as e:
+                self.send_error(400, f"Invalid JSON: {str(e)}")
+            except Exception as e:
+                self.send_error(500, f"Error: {str(e)}")
+        else:
+            self.send_error(404, "Not found")
+    
+    async def handle_mcp_request(self, request: dict):
+        """Handle an MCP JSON-RPC request."""
+        method = request.get('method')
+        params = request.get('params', {})
+        request_id = request.get('id')
+        
+        try:
+            if method == 'initialize':
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "office-word-mcp-server",
+                            "version": "1.0.0"
+                        }
+                    }
+                }
+            
+            elif method == 'tools/list':
+                tools = []
+                for tool_name, tool_func in TOOL_REGISTRY.items():
+                    tools.append({
+                        "name": tool_name,
+                        "description": tool_func.__doc__ or f"Tool: {tool_name}",
+                        "inputSchema": self._get_tool_schema(tool_func)
+                    })
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "tools": tools
+                    }
+                }
+            
+            elif method == 'tools/call':
+                tool_name = params.get('name')
+                arguments = params.get('arguments', {})
+                
+                if tool_name not in TOOL_REGISTRY:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32601,
+                            "message": f"Tool not found: {tool_name}"
+                        }
+                    }
+                
+                tool_func = TOOL_REGISTRY[tool_name]
+                
+                # Ensure filename uses documents directory
+                if 'filename' in arguments:
+                    filename = arguments['filename']
+                    if not os.path.isabs(filename) and not filename.startswith('./'):
+                        arguments['filename'] = os.path.join(DOCUMENTS_DIR, filename)
+                
+                if 'source_filename' in arguments:
+                    filename = arguments['source_filename']
+                    if not os.path.isabs(filename) and not filename.startswith('./'):
+                        arguments['source_filename'] = os.path.join(DOCUMENTS_DIR, filename)
+                
+                # Call the tool
+                if asyncio.iscoroutinefunction(tool_func):
+                    result = await tool_func(**arguments)
+                else:
+                    result = tool_func(**arguments)
+                
+                # Enhance result with document URL
+                enhanced_result = self._enhance_result_with_url(str(result), arguments)
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": enhanced_result
+                            }
+                        ]
+                    }
+                }
+            
+            else:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"Method not found: {method}"
+                    }
+                }
+        
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32603,
+                    "message": str(e)
+                }
+            }
+    
+    def _get_tool_schema(self, tool_func):
+        """Extract JSON schema from tool function signature."""
+        sig = inspect.signature(tool_func)
+        
+        properties = {}
+        required = []
+        
+        for param_name, param in sig.parameters.items():
+            if param_name == 'self':
+                continue
+            
+            param_type = param.annotation
+            param_default = param.default
+            
+            # Map Python types to JSON schema types
+            if param_type == str or param_type == inspect.Parameter.empty:
+                schema_type = "string"
+            elif param_type == int:
+                schema_type = "integer"
+            elif param_type == float:
+                schema_type = "number"
+            elif param_type == bool:
+                schema_type = "boolean"
+            elif param_type == list:
+                schema_type = "array"
+            elif param_type == dict:
+                schema_type = "object"
+            else:
+                schema_type = "string"
+            
+            properties[param_name] = {
+                "type": schema_type,
+                "description": f"Parameter: {param_name}"
+            }
+            
+            if param_default == inspect.Parameter.empty:
+                required.append(param_name)
+        
+        schema = {
+            "type": "object",
+            "properties": properties
+        }
+        
+        if required:
+            schema["required"] = required
+        
+        return schema
+    
+    def _enhance_result_with_url(self, result: str, arguments: dict):
+        """Enhance tool result with document URL if applicable."""
+        filename = arguments.get('filename') or arguments.get('source_filename')
+        
+        if filename:
+            # Extract just the filename if it's a path
+            doc_filename = os.path.basename(filename)
+            if not doc_filename.endswith('.docx'):
+                doc_filename = f"{doc_filename}.docx"
+            
+            base_url = BASE_URL or f"http://{self.server.server_address[0]}:{self.server.server_address[1]}"
+            doc_url = f"{base_url}/documents/{doc_filename}"
+            
+            if "successfully" in result.lower() or "created" in result.lower() or "saved" in result.lower():
+                return f"{result}\n\nDocument URL: {doc_url}\nDownload URL: {doc_url}"
+        
+        return result
+    
+    def serve_document(self, filename: str):
+        """Serve a document file."""
+        # Security: prevent directory traversal
+        filename = os.path.basename(filename)
+        filepath = os.path.join(DOCUMENTS_DIR, filename)
+        
+        if not os.path.exists(filepath):
+            self.send_error(404, "Document not found")
+            return
+        
+        try:
+            with open(filepath, 'rb') as f:
+                content = f.read()
+            
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header('Content-Length', str(len(content)))
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as e:
+            self.send_error(500, f"Error serving document: {str(e)}")
+    
+    def log_message(self, format, *args):
+        """Override to use print instead of stderr."""
+        print(f"{self.address_string()} - {format % args}")
+
+
+def run_http_server():
+    """Run the HTTP server."""
+    port = int(os.getenv('PORT', 8000))
+    host = os.getenv('HOST', '0.0.0.0')
+    
+    # Set BASE_URL if not already set
+    global BASE_URL
+    if not BASE_URL:
+        # Try to get from Render environment
+        render_service_url = os.getenv('RENDER_SERVICE_URL')
+        if render_service_url:
+            BASE_URL = render_service_url
+        else:
+            BASE_URL = f"http://{host}:{port}"
+    
+    server = HTTPServer((host, port), MCPHTTPHandler)
+    print(f"Office Word MCP Server running on http://{host}:{port}")
+    print(f"Documents directory: {DOCUMENTS_DIR}")
+    print(f"Base URL: {BASE_URL}")
+    print(f"MCP endpoint: http://{host}:{port}/mcp/stream")
+    print(f"Documents endpoint: http://{host}:{port}/documents/")
+    
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down server...")
+        server.shutdown()
+
+
+if __name__ == "__main__":
+    run_http_server()
