@@ -25,6 +25,7 @@ from word_document_server.tools import (
     extended_document_tools,
     comment_tools
 )
+from word_document_server.tools import template_tools
 from document_manager import get_document_manager
 from storage_adapter import get_storage_adapter
 
@@ -98,6 +99,9 @@ def build_tool_registry():
         'set_table_cell_padding': format_tools.set_table_cell_padding,
         'replace_paragraph_block_below_header': content_tools.replace_paragraph_block_below_header_tool,
         'replace_block_between_manual_anchors': content_tools.replace_block_between_manual_anchors_tool,
+        'set_template_from_file': template_tools.set_template_from_file,
+        'get_template_info': template_tools.get_template_info,
+        'clear_template': template_tools.clear_template,
     }
     
     TOOL_REGISTRY = tools_map

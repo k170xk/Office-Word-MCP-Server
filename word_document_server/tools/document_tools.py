@@ -3,21 +3,24 @@ Document creation and manipulation tools for Word Document Server.
 """
 import os
 import json
+import shutil
 from typing import Dict, List, Optional, Any
 from docx import Document
 
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension, create_document_copy
 from word_document_server.utils.document_utils import get_document_properties, extract_document_text, get_document_structure, get_document_xml, insert_header_near_text, insert_line_or_paragraph_near_text
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
+from word_document_server.tools.template_tools import get_template_path, template_exists
 
 
-async def create_document(filename: str, title: Optional[str] = None, author: Optional[str] = None) -> str:
+async def create_document(filename: str, title: Optional[str] = None, author: Optional[str] = None, use_template: bool = True) -> str:
     """Create a new Word document with optional metadata.
     
     Args:
         filename: Name of the document to create (with or without .docx extension)
         title: Optional title for the document metadata
         author: Optional author for the document metadata
+        use_template: If True (default), use the template if available
     """
     filename = ensure_docx_extension(filename)
     
@@ -27,22 +30,31 @@ async def create_document(filename: str, title: Optional[str] = None, author: Op
         return f"Cannot create document: {error_message}"
     
     try:
-        doc = Document()
+        # Use template if available and use_template is True
+        if use_template and template_exists():
+            template_path = get_template_path()
+            # Copy template to new document
+            shutil.copy2(template_path, filename)
+            doc = Document(filename)
+        else:
+            # Create new document from scratch
+            doc = Document()
         
-        # Set properties if provided
+        # Set properties if provided (overwrite template properties)
         if title:
             doc.core_properties.title = title
         if author:
             doc.core_properties.author = author
         
-        # Ensure necessary styles exist
+        # Ensure necessary styles exist (in case template doesn't have them)
         ensure_heading_style(doc)
         ensure_table_style(doc)
         
         # Save the document
         doc.save(filename)
         
-        return f"Document {filename} created successfully"
+        template_note = " (using template)" if (use_template and template_exists()) else ""
+        return f"Document {filename} created successfully{template_note}"
     except Exception as e:
         return f"Failed to create document: {str(e)}"
 
