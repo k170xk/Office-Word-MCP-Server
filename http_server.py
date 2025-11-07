@@ -176,9 +176,14 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not found")
     
     def do_POST(self):
-        """Handle POST requests for MCP tool calls."""
+        """Handle POST requests for MCP tool calls and template uploads."""
         parsed_path = urlparse(self.path)
         path = parsed_path.path
+        
+        # Template upload endpoint
+        if path == '/upload-template':
+            self.handle_template_upload()
+            return
         
         if path == '/mcp/stream':
             content_length = int(self.headers.get('Content-Length', 0))
