@@ -327,34 +327,34 @@ async def copy_document(source_filename: str, destination_filename: Optional[str
                             # Replace {Document Subtitle} placeholder
                             if document_subtitle is not None and '{Document Subtitle}' in paragraph.text:
                                 original_runs = []
-                            for run in paragraph.runs:
-                                original_runs.append({
-                                    'text': run.text,
-                                    'bold': run.bold,
-                                    'italic': run.italic,
-                                    'font_name': run.font.name,
-                                    'font_size': run.font.size
-                                })
-                            
-                            new_text = paragraph.text.replace('{Document Subtitle}', document_subtitle)
-                            paragraph.clear()
-                            
-                            if original_runs:
-                                first_run = original_runs[0]
-                                run = paragraph.add_run(new_text)
-                                run.bold = first_run.get('bold', False)
-                                run.italic = first_run.get('italic', False)
-                                if first_run.get('font_name'):
-                                    run.font.name = first_run['font_name']
-                                if first_run.get('font_size'):
-                                    run.font.size = first_run['font_size']
+                                for run in paragraph.runs:
+                                    original_runs.append({
+                                        'text': run.text,
+                                        'bold': run.bold,
+                                        'italic': run.italic,
+                                        'font_name': run.font.name,
+                                        'font_size': run.font.size
+                                    })
+                                
+                                new_text = paragraph.text.replace('{Document Subtitle}', document_subtitle)
+                                paragraph.clear()
+                                
+                                if original_runs:
+                                    first_run = original_runs[0]
+                                    run = paragraph.add_run(new_text)
+                                    run.bold = first_run.get('bold', False)
+                                    run.italic = first_run.get('italic', False)
+                                    if first_run.get('font_name'):
+                                        run.font.name = first_run['font_name']
+                                    if first_run.get('font_size'):
+                                        run.font.size = first_run['font_size']
+                                    else:
+                                        run.font.name = 'Calibri'
+                                        run.font.size = Pt(11)
                                 else:
+                                    run = paragraph.add_run(new_text)
                                     run.font.name = 'Calibri'
                                     run.font.size = Pt(11)
-                            else:
-                                run = paragraph.add_run(new_text)
-                                run.font.name = 'Calibri'
-                                run.font.size = Pt(11)
                 
                 doc.save(new_path)
                 
