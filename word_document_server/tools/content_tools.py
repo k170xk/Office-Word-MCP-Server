@@ -224,12 +224,12 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
                         try:
                             # Get the cell
                             cell = table.cell(i, j)
-                            # Clear existing content
-                            cell.paragraphs[0].clear()
-                            # Add new text as a run
+                            # Convert cell_text to string
                             text_to_add = str(cell_text) if cell_text is not None else ""
-                            if text_to_add:
-                                cell.paragraphs[0].add_run(text_to_add)
+                            
+                            # Use the simple .text property which is the standard way
+                            # This replaces all content in the cell
+                            cell.text = text_to_add
                         except Exception as e:
                             # If there's an error with a specific cell, log and continue
                             print(f"Warning: Error setting cell ({i},{j}): {str(e)}")
