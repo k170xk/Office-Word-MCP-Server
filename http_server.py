@@ -25,6 +25,8 @@ from word_document_server.tools import (
     extended_document_tools,
     comment_tools
 )
+from document_manager import get_document_manager
+from storage_adapter import get_storage_adapter
 
 # Document storage directory
 DOCUMENTS_DIR = os.getenv('DOCUMENTS_DIR', './documents')
@@ -238,25 +240,74 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                 
                 tool_func = TOOL_REGISTRY[tool_name]
                 
-                # Ensure filename uses documents directory
+                # Use storage adapter for document operations
+                manager = get_document_manager()
+                storage = get_storage_adapter()
+                
+                # Handle filename parameters - download from storage if exists
+                original_filename = None
+                local_path = None
+                
                 if 'filename' in arguments:
-                    filename = arguments['filename']
-                    if not os.path.isabs(filename) and not filename.startswith('./'):
-                        arguments['filename'] = os.path.join(DOCUMENTS_DIR, filename)
+                    original_filename = arguments['filename']
+                    # Extract just the filename (remove path if present)
+                    filename_base = os.path.basename(original_filename)
+                    
+                    # Check if document exists in storage
+                    create_if_missing = 'create' in tool_name or 'add' in tool_name
+                    try:
+                        local_path = manager.get_local_path(filename_base, create_if_missing=create_if_missing)
+                        arguments['filename'] = local_path
+                    except FileNotFoundError:
+                        if create_if_missing:
+                            local_path = manager.get_local_path(filename_base, create_if_missing=True)
+                            arguments['filename'] = local_path
+                        else:
+                            return {
+                                "jsonrpc": "2.0",
+                                "id": request_id,
+                                "error": {
+                                    "code": -32602,
+                                    "message": f"Document {filename_base} not found"
+                                }
+                            }
                 
                 if 'source_filename' in arguments:
-                    filename = arguments['source_filename']
-                    if not os.path.isabs(filename) and not filename.startswith('./'):
-                        arguments['source_filename'] = os.path.join(DOCUMENTS_DIR, filename)
+                    source_filename_base = os.path.basename(arguments['source_filename'])
+                    try:
+                        source_local_path = manager.get_local_path(source_filename_base, create_if_missing=False)
+                        arguments['source_filename'] = source_local_path
+                    except FileNotFoundError:
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "error": {
+                                "code": -32602,
+                                "message": f"Source document {source_filename_base} not found"
+                            }
+                        }
                 
-                # Call the tool
-                if asyncio.iscoroutinefunction(tool_func):
-                    result = await tool_func(**arguments)
-                else:
-                    result = tool_func(**arguments)
-                
-                # Enhance result with document URL
-                enhanced_result = self._enhance_result_with_url(str(result), arguments)
+                try:
+                    # Call the tool
+                    if asyncio.iscoroutinefunction(tool_func):
+                        result = await tool_func(**arguments)
+                    else:
+                        result = tool_func(**arguments)
+                    
+                    # Upload document back to storage if it was modified
+                    if local_path and os.path.exists(local_path):
+                        filename_base = os.path.basename(original_filename or arguments.get('filename', ''))
+                        if filename_base:
+                            doc_url = manager.save_document(local_path, filename_base)
+                            # Enhance result with URL
+                            if isinstance(result, str):
+                                result = f"{result}\n\nDocument URL: {doc_url}\nDownload URL: {doc_url}"
+                    
+                    enhanced_result = str(result)
+                finally:
+                    # Cleanup temp files
+                    if local_path and os.path.exists(local_path):
+                        manager.cleanup_temp(os.path.basename(local_path))
                 
                 return {
                     "jsonrpc": "2.0",
@@ -360,17 +411,18 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
         return result
     
     def serve_document(self, filename: str):
-        """Serve a document file."""
+        """Serve a document file from storage."""
         # Security: prevent directory traversal
         filename = os.path.basename(filename)
-        filepath = os.path.join(DOCUMENTS_DIR, filename)
-        
-        if not os.path.exists(filepath):
-            self.send_error(404, "Document not found")
-            return
         
         try:
-            with open(filepath, 'rb') as f:
+            storage = get_storage_adapter()
+            manager = get_document_manager()
+            
+            # Download from storage to temp location
+            local_path = manager.get_local_path(filename, create_if_missing=False)
+            
+            with open(local_path, 'rb') as f:
                 content = f.read()
             
             self.send_response(200)
@@ -380,6 +432,11 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
             self.wfile.write(content)
+            
+            # Cleanup temp file
+            manager.cleanup_temp(filename)
+        except FileNotFoundError:
+            self.send_error(404, "Document not found")
         except Exception as e:
             self.send_error(500, f"Error serving document: {str(e)}")
     
