@@ -346,10 +346,14 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
     
     def _get_tool_schema(self, tool_func):
         """Extract JSON schema from tool function signature."""
+        import typing
         sig = inspect.signature(tool_func)
         
         properties = {}
         required = []
+        
+        # Get docstring for better descriptions
+        docstring = tool_func.__doc__ or ""
         
         for param_name, param in sig.parameters.items():
             if param_name == 'self':
@@ -358,27 +362,57 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             param_type = param.annotation
             param_default = param.default
             
+            # Handle Optional types
+            if hasattr(typing, 'get_origin') and typing.get_origin(param_type) is typing.Union:
+                args = typing.get_args(param_type)
+                # If Union includes None, it's Optional
+                if type(None) in args:
+                    # Get the actual type (not None)
+                    param_type = next((arg for arg in args if arg is not type(None)), str)
+            
             # Map Python types to JSON schema types
-            if param_type == str or param_type == inspect.Parameter.empty:
-                schema_type = "string"
+            prop_schema = {}
+            
+            if param_type == str or param_type == inspect.Parameter.empty or param_type == type(None):
+                prop_schema["type"] = "string"
             elif param_type == int:
-                schema_type = "integer"
+                prop_schema["type"] = "integer"
             elif param_type == float:
-                schema_type = "number"
+                prop_schema["type"] = "number"
             elif param_type == bool:
-                schema_type = "boolean"
-            elif param_type == list:
-                schema_type = "array"
+                prop_schema["type"] = "boolean"
+            elif param_type == list or (hasattr(typing, '_GenericAlias') and 'list' in str(param_type)):
+                prop_schema["type"] = "array"
+                prop_schema["items"] = {"type": "string"}  # Default to string array
             elif param_type == dict:
-                schema_type = "object"
+                prop_schema["type"] = "object"
             else:
-                schema_type = "string"
+                prop_schema["type"] = "string"
             
-            properties[param_name] = {
-                "type": schema_type,
-                "description": f"Parameter: {param_name}"
-            }
+            # Add enum constraints for known parameters
+            if param_name == 'position':
+                prop_schema["enum"] = ["before", "after"]
+                prop_schema["description"] = "Position relative to target: 'before' or 'after'"
+            elif param_name == 'bullet_type':
+                prop_schema["enum"] = ["bullet", "number"]
+                prop_schema["description"] = "List type: 'bullet' for bullets (•) or 'number' for numbered (1,2,3)"
+            elif param_name == 'list_items':
+                prop_schema["description"] = "Array of strings, each as a list item"
+            else:
+                # Try to extract description from docstring
+                desc = f"Parameter: {param_name}"
+                if docstring:
+                    # Look for param_name in docstring
+                    import re
+                    pattern = rf"{param_name}:\s*([^\n]+)"
+                    match = re.search(pattern, docstring)
+                    if match:
+                        desc = match.group(1).strip()
+                prop_schema["description"] = desc
             
+            properties[param_name] = prop_schema
+            
+            # Only require if no default value
             if param_default == inspect.Parameter.empty:
                 required.append(param_name)
         
