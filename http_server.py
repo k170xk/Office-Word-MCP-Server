@@ -591,8 +591,6 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             # Write the file data directly (already extracted from multipart)
             with open(template_path, 'wb') as f:
                 f.write(file_data)
-                    else:
-                        f.write(file_item.value.encode('utf-8'))
             
             self.send_response(200)
             self.send_cors_headers()
