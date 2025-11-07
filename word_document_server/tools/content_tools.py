@@ -243,7 +243,7 @@ async def add_picture(filename: str, image_path: str, width: Optional[float] = N
     
     Args:
         filename: Path to the Word document
-        image_path: Path to the image file
+        image_path: Path to the image file OR URL to an image (http:// or https://)
         width: Optional width in inches (proportional scaling)
     """
     filename = ensure_docx_extension(filename)
@@ -252,21 +252,49 @@ async def add_picture(filename: str, image_path: str, width: Optional[float] = N
     if not os.path.exists(filename):
         return f"Document {filename} does not exist"
     
-    # Get absolute paths for better diagnostics
-    abs_filename = os.path.abspath(filename)
-    abs_image_path = os.path.abspath(image_path)
+    # Check if image_path is a URL
+    is_url = image_path.startswith('http://') or image_path.startswith('https://')
+    temp_file = None
     
-    # Validate image existence with improved error message
-    if not os.path.exists(abs_image_path):
-        return f"Image file not found: {abs_image_path}"
-    
-    # Check image file size
     try:
-        image_size = os.path.getsize(abs_image_path) / 1024  # Size in KB
-        if image_size <= 0:
-            return f"Image file appears to be empty: {abs_image_path} (0 KB)"
-    except Exception as size_error:
-        return f"Error checking image file: {str(size_error)}"
+        if is_url:
+            # Download image from URL
+            try:
+                # Create a temporary file to store the downloaded image
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.tmp')
+                temp_path = temp_file.name
+                temp_file.close()
+                
+                # Download the image
+                urllib.request.urlretrieve(image_path, temp_path)
+                
+                # Use the temporary file as the image path
+                abs_image_path = temp_path
+                image_source = f"URL: {image_path}"
+            except Exception as download_error:
+                if temp_file and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                return f"Failed to download image from URL {image_path}: {str(download_error)}"
+        else:
+            # Use local file path
+            abs_image_path = os.path.abspath(image_path)
+            image_source = abs_image_path
+            
+            # Validate image existence with improved error message
+            if not os.path.exists(abs_image_path):
+                return f"Image file not found: {abs_image_path}"
+        
+        # Check image file size
+        try:
+            image_size = os.path.getsize(abs_image_path) / 1024  # Size in KB
+            if image_size <= 0:
+                if temp_file and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                return f"Image file appears to be empty: {image_source} (0 KB)"
+        except Exception as size_error:
+            if temp_file and os.path.exists(temp_path):
+                os.unlink(temp_path)
+            return f"Error checking image file: {str(size_error)}"
     
     # Check if file is writeable
     is_writeable, error_message = check_file_writeable(abs_filename)
