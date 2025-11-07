@@ -244,28 +244,55 @@ async def get_document_outline(filename: str) -> str:
     return json.dumps(structure, indent=2)
 
 
-async def list_available_documents(directory: str = ".") -> str:
-    """List all .docx files in the specified directory.
+async def list_available_documents(directory: Optional[str] = None) -> str:
+    """List all files in the storage directory (disk or documents folder).
+    Shows both .docx files and other files with their sizes.
     
     Args:
-        directory: Directory to search for Word documents
+        directory: Optional directory path. If not provided, uses the storage directory from environment.
     """
     try:
-        if not os.path.exists(directory):
-            return f"Directory {directory} does not exist"
+        # Get the storage directory from environment (Render Disk or local)
+        if directory is None:
+            storage_dir = os.getenv('DISK_PATH', os.getenv('DOCUMENTS_DIR', '/mnt/disk/documents'))
+        else:
+            storage_dir = directory
         
-        docx_files = [f for f in os.listdir(directory) if f.endswith('.docx')]
+        if not os.path.exists(storage_dir):
+            return f"Storage directory {storage_dir} does not exist"
         
-        if not docx_files:
-            return f"No Word documents found in {directory}"
+        # List all files in the directory
+        all_files = os.listdir(storage_dir)
+        docx_files = [f for f in all_files if f.endswith('.docx')]
+        other_files = [f for f in all_files if not f.endswith('.docx') and os.path.isfile(os.path.join(storage_dir, f))]
         
-        result = f"Found {len(docx_files)} Word documents in {directory}:\n"
-        for file in docx_files:
-            file_path = os.path.join(directory, file)
-            size = os.path.getsize(file_path) / 1024  # KB
-            result += f"- {file} ({size:.2f} KB)\n"
+        result_parts = [f"Storage directory: {storage_dir}\n"]
         
-        return result
+        if docx_files:
+            docx_files.sort()
+            result_parts.append(f"\nWord documents ({len(docx_files)}):")
+            for file in docx_files:
+                file_path = os.path.join(storage_dir, file)
+                try:
+                    size = os.path.getsize(file_path) / 1024  # KB
+                    result_parts.append(f"  - {file} ({size:.2f} KB)")
+                except:
+                    result_parts.append(f"  - {file}")
+        else:
+            result_parts.append("\nNo Word documents found")
+        
+        if other_files:
+            other_files.sort()
+            result_parts.append(f"\nOther files ({len(other_files)}):")
+            for file in other_files:
+                file_path = os.path.join(storage_dir, file)
+                try:
+                    size = os.path.getsize(file_path) / 1024  # KB
+                    result_parts.append(f"  - {file} ({size:.2f} KB)")
+                except:
+                    result_parts.append(f"  - {file}")
+        
+        return "\n".join(result_parts)
     except Exception as e:
         return f"Failed to list documents: {str(e)}"
 
