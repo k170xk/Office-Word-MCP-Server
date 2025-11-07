@@ -298,34 +298,46 @@ async def add_picture(filename: str, image_path: str, width: Optional[float] = N
             if temp_file and os.path.exists(temp_path):
                 os.unlink(temp_path)
             return f"Error checking image file: {str(size_error)}"
-    
-    # Check if file is writeable
-    is_writeable, error_message = check_file_writeable(abs_filename)
-    if not is_writeable:
-        return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
-    
-    try:
-        doc = Document(abs_filename)
-        # Additional diagnostic info
-        diagnostic = f"Attempting to add image ({abs_image_path}, {image_size:.2f} KB) to document ({abs_filename})"
+        
+        # Check if file is writeable
+        abs_filename = os.path.abspath(filename)
+        is_writeable, error_message = check_file_writeable(abs_filename)
+        if not is_writeable:
+            if temp_file and os.path.exists(temp_path):
+                os.unlink(temp_path)
+            return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
         
         try:
-            if width:
-                doc.add_picture(abs_image_path, width=Inches(width))
-            else:
-                doc.add_picture(abs_image_path)
-            doc.save(abs_filename)
-            return f"Picture {image_path} added to {filename}"
-        except Exception as inner_error:
-            # More detailed error for the specific operation
-            error_type = type(inner_error).__name__
-            error_msg = str(inner_error)
-            return f"Failed to add picture: {error_type} - {error_msg or 'No error details available'}\nDiagnostic info: {diagnostic}"
-    except Exception as outer_error:
-        # Fallback error handling
-        error_type = type(outer_error).__name__
-        error_msg = str(outer_error)
-        return f"Document processing error: {error_type} - {error_msg or 'No error details available'}"
+            doc = Document(abs_filename)
+            # Additional diagnostic info
+            diagnostic = f"Attempting to add image ({image_source}, {image_size:.2f} KB) to document ({abs_filename})"
+            
+            try:
+                if width:
+                    doc.add_picture(abs_image_path, width=Inches(width))
+                else:
+                    doc.add_picture(abs_image_path)
+                doc.save(abs_filename)
+                
+                result_msg = f"Picture from {image_source if is_url else image_path} added to {filename}"
+                return result_msg
+            except Exception as inner_error:
+                # More detailed error for the specific operation
+                error_type = type(inner_error).__name__
+                error_msg = str(inner_error)
+                return f"Failed to add picture: {error_type} - {error_msg or 'No error details available'}\nDiagnostic info: {diagnostic}"
+        except Exception as outer_error:
+            # Fallback error handling
+            error_type = type(outer_error).__name__
+            error_msg = str(outer_error)
+            return f"Document processing error: {error_type} - {error_msg or 'No error details available'}"
+        finally:
+            # Clean up temporary file if we downloaded from URL
+            if is_url and temp_file and 'temp_path' in locals() and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass  # Ignore cleanup errors
 
 
 async def add_page_break(filename: str) -> str:
