@@ -8,6 +8,7 @@ Force deploy: 2025-11-07
 import os
 import json
 import asyncio
+import hmac
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 import sys
@@ -33,6 +34,10 @@ from storage_adapter import get_storage_adapter
 # Document storage directory
 DOCUMENTS_DIR = os.getenv('DOCUMENTS_DIR', './documents')
 BASE_URL = os.getenv('BASE_URL', '')  # Will be set from Render service URL
+
+# Shared secret for HTTP access. Accepts Bearer token or X-API-Key header.
+# Leave unset locally for open access; set on Render to protect MCP, downloads, uploads.
+EXPECTED_API_KEY = os.getenv('MCP_API_KEY', '').strip()
 
 # Ensure documents directory exists
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
@@ -118,6 +123,39 @@ build_tool_registry()
 class MCPHTTPHandler(BaseHTTPRequestHandler):
     """HTTP handler for MCP JSON-RPC requests and document serving."""
     
+    def _client_api_key_ok(self) -> bool:
+        if not EXPECTED_API_KEY:
+            return True
+        auth = self.headers.get('Authorization', '').strip()
+        token = ''
+        if auth.lower().startswith('bearer '):
+            token = auth[7:].strip()
+        if not token:
+            token = (self.headers.get('X-API-Key') or self.headers.get('x-api-key') or '').strip()
+        if not token:
+            return False
+        try:
+            return hmac.compare_digest(
+                token.encode('utf-8'),
+                EXPECTED_API_KEY.encode('utf-8'),
+            )
+        except (ValueError, TypeError):
+            return False
+    
+    def _send_unauthorized(self, message: str = 'Unauthorized'):
+        payload = json.dumps({'error': 'unauthorized', 'message': message})
+        body = payload.encode('utf-8')
+        self.send_response(401)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header(
+            'WWW-Authenticate',
+            'Bearer realm="office-word-mcp", error="invalid_token"',
+        )
+        self.send_cors_headers()
+        self.end_headers()
+        self.wfile.write(body)
+    
     def do_OPTIONS(self):
         """Handle CORS preflight requests."""
         self.send_response(200)
@@ -125,11 +163,13 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
         self.end_headers()
     
     def send_cors_headers(self):
-        """Send CORS headers."""
+        """Send CORS headers (does not set Content-Type; caller sets response body type)."""
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.send_header('Content-Type', 'application/json')
+        self.send_header(
+            'Access-Control-Allow-Headers',
+            'Content-Type, Authorization, X-API-Key',
+        )
     
     def do_GET(self):
         """Handle GET requests for tool discovery and document serving."""
@@ -138,6 +178,9 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
         
         # Tool discovery endpoint
         if path == '/mcp/stream' or path == '/mcp/tools':
+            if not self._client_api_key_ok():
+                self._send_unauthorized('Valid Bearer token or X-API-Key required')
+                return
             try:
                 request = {
                     "jsonrpc": "2.0",
@@ -148,6 +191,7 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                 response = asyncio.run(self.handle_mcp_request(request))
                 
                 self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode('utf-8'))
@@ -156,21 +200,29 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
         
         # Document serving endpoint
         elif path.startswith('/documents/'):
+            if not self._client_api_key_ok():
+                self._send_unauthorized('Valid Bearer token or X-API-Key required')
+                return
             filename = path.replace('/documents/', '')
             self.serve_document(filename)
         
         # Health check
         elif path == '/health':
             self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
             self.send_cors_headers()
             self.end_headers()
             self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
         
         # Template info endpoint
         elif path == '/template/info':
+            if not self._client_api_key_ok():
+                self._send_unauthorized('Valid Bearer token or X-API-Key required')
+                return
             try:
                 info = asyncio.run(template_tools.get_template_info())
                 self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({"info": info}).encode('utf-8'))
@@ -187,10 +239,16 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
         
         # Template upload endpoint
         if path == '/upload-template':
+            if not self._client_api_key_ok():
+                self._send_unauthorized('Valid Bearer token or X-API-Key required')
+                return
             self.handle_template_upload()
             return
         
         if path == '/mcp/stream':
+            if not self._client_api_key_ok():
+                self._send_unauthorized('Valid Bearer token or X-API-Key required')
+                return
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length).decode('utf-8')
             
@@ -199,6 +257,7 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                 response = asyncio.run(self.handle_mcp_request(request))
                 
                 self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode('utf-8'))
@@ -552,6 +611,7 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                     f.write(file_data)
                 
                 self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
                 self.send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({
@@ -594,11 +654,12 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                 f.write(file_data)
             
             self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
             self.send_cors_headers()
             self.end_headers()
             self.wfile.write(json.dumps({
                 "success": True,
-                "message": f"Template '{file_item.filename}' uploaded successfully",
+                "message": "Template uploaded successfully via multipart upload",
                 "template_path": template_path
             }).encode('utf-8'))
             
@@ -633,6 +694,12 @@ def run_http_server():
     print(f"Base URL: {BASE_URL}")
     print(f"MCP endpoint: http://{host}:{port}/mcp/stream")
     print(f"Documents endpoint: http://{host}:{port}/documents/")
+    if EXPECTED_API_KEY:
+        print("MCP_HTTP_AUTH: MCP_API_KEY is set — MCP, /documents/, template routes require Bearer or X-API-Key")
+    else:
+        print("MCP_HTTP_AUTH: MCP_API_KEY not set — all HTTP routes except /health are public")
+        if os.getenv('RENDER'):
+            print("WARNING: Running on Render without MCP_API_KEY — anyone may call tools or download documents")
     
     try:
         server.serve_forever()
