@@ -69,3 +69,31 @@ def normalize_storage_document_key(user_path: str) -> str:
         )
 
     return "/".join([*segments[:-1], final_name])
+
+
+def apply_workspace_document_prefix(workspace_id: Optional[str], raw_path: Optional[str]) -> Optional[str]:
+    """
+    Prefix ``workspace_id/`` when the caller supplied a bare document name only (single path
+    segment already under disk root semantics).
+
+    ``workspace_id`` is validated internally. Multi-segment paths are returned unchanged.
+
+    Raises:
+        ValueError: Invalid non-empty workspace id header (same rules as :func:`validate_workspace_segment`).
+    """
+    validated_ws = validate_workspace_segment(workspace_id)
+    if not validated_ws:
+        return raw_path
+    if raw_path is None:
+        return None
+    rp = str(raw_path).strip()
+    if rp == "":
+        return raw_path
+
+    rp_norm = rp.replace("\\", "/").strip().lstrip("/")
+    segments = [p for p in rp_norm.split("/") if p not in ("", ".")]
+    if not segments:
+        return raw_path
+    if len(segments) >= 2:
+        return rp
+    return f"{validated_ws}/{rp}"

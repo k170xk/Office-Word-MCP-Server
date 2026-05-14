@@ -28,7 +28,11 @@ from word_document_server.tools import (
     comment_tools
 )
 from word_document_server.tools import template_tools, document_formatting_tools
-from word_document_server.storage_paths import normalize_storage_document_key
+from word_document_server.storage_paths import (
+    normalize_storage_document_key,
+    validate_workspace_segment,
+    apply_workspace_document_prefix,
+)
 
 from document_manager import get_document_manager
 from storage_adapter import get_storage_adapter
@@ -145,6 +149,33 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             )
         except (ValueError, TypeError):
             return False
+
+    def _parse_workspace_http_header(self):
+        """Read ``X-Workspace-ID``. Returns (workspace_segment_or_None, error_message_or_None)."""
+        hdr = self.headers.get('X-Workspace-ID') or self.headers.get('x-workspace-id')
+        if hdr is None or str(hdr).strip() == '':
+            return None, None
+        try:
+            return validate_workspace_segment(str(hdr).strip()), None
+        except ValueError as exc:
+            return None, str(exc)
+
+    def _merge_workspace_into_tool_arguments(self, tool_name: str, workspace_id, arguments: dict):
+        """Apply workspace prefix to bare filenames and default ``list_available_documents`` folder."""
+        if not workspace_id:
+            return arguments
+        out = dict(arguments)
+        if tool_name == 'list_available_documents':
+            w = out.get('workspace')
+            if w is None or str(w).strip() in ('', '.'):
+                out['workspace'] = workspace_id
+        fn = out.get('filename')
+        if fn is not None:
+            out['filename'] = apply_workspace_document_prefix(workspace_id, fn)
+        sfn = out.get('source_filename')
+        if sfn is not None:
+            out['source_filename'] = apply_workspace_document_prefix(workspace_id, sfn)
+        return out
     
     def _send_unauthorized(self, message: str = 'Unauthorized'):
         payload = json.dumps({'error': 'unauthorized', 'message': message})
@@ -172,7 +203,7 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header(
             'Access-Control-Allow-Headers',
-            'Content-Type, Authorization, X-API-Key',
+            'Content-Type, Authorization, X-API-Key, X-Workspace-ID',
         )
     
     def do_GET(self):
@@ -314,7 +345,18 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             
             elif method == 'tools/call':
                 tool_name = params.get('name')
-                arguments = params.get('arguments', {})
+                arguments = dict(params.get('arguments') or {})
+
+                ws_id, ws_hdr_err = self._parse_workspace_http_header()
+                if ws_hdr_err:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32602,
+                            "message": f"Invalid X-Workspace-ID header: {ws_hdr_err}",
+                        },
+                    }
 
                 if tool_name not in TOOL_REGISTRY:
                     return {
@@ -325,6 +367,10 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                             "message": f"Tool not found: {tool_name}",
                         },
                     }
+
+                arguments = self._merge_workspace_into_tool_arguments(
+                    tool_name, ws_id, arguments
+                )
 
                 tool_func = TOOL_REGISTRY[tool_name]
                 manager = get_document_manager()
@@ -551,8 +597,19 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
         from urllib.parse import unquote
 
         raw_decoded = unquote(raw_path_fragment or "")
+        ws_id, ws_err = self._parse_workspace_http_header()
+        if ws_err:
+            self.send_error(400, f"Invalid X-Workspace-ID header: {ws_err}")
+            return
+
+        merged = raw_decoded
+        if ws_id:
+            merged = apply_workspace_document_prefix(ws_id, raw_decoded)
+            if merged is None:
+                merged = raw_decoded
+
         try:
-            storage_key = normalize_storage_document_key(raw_decoded)
+            storage_key = normalize_storage_document_key(merged)
         except ValueError as e:
             self.send_error(400, str(e))
             return
@@ -701,6 +758,10 @@ def run_http_server():
     print(f"Base URL: {BASE_URL}")
     print(f"MCP endpoint: http://{host}:{port}/mcp/stream")
     print(f"Documents endpoint: http://{host}:{port}/documents/")
+    print(
+        "Workspace: optional X-Workspace-ID request header prefixes bare document names "
+        "for MCP tool calls and /documents downloads."
+    )
     if MCP_REQUIRE_API_KEY and EXPECTED_API_KEY:
         print("HTTP auth: MCP_REQUIRE_API_KEY=1 — require Bearer/X-Api-Key matching MCP_API_KEY")
     elif MCP_REQUIRE_API_KEY:
