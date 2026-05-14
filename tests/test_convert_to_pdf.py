@@ -34,7 +34,15 @@ def test_convert_to_pdf_with_temp_docx(tmp_path: Path):
     out_pdf = tmp_path / "converted output.pdf"
 
     # 3) Run the asynchronous function under test
-    result_msg = asyncio.run(convert_to_pdf(str(src_doc), output_filename=str(out_pdf)))
+    try:
+        result_msg = asyncio.run(
+            convert_to_pdf(str(src_doc), output_filename=str(out_pdf))
+        )
+    except SystemExit:
+        # docx2pdf may call sys.exit on automation failure instead of raising.
+        pytest.skip(
+            "PDF conversion tooling exited (e.g. Word/LibreOffice unavailable)"
+        )
 
     # 4) Success condition: the return message contains success keywords, or the target PDF exists
     success_keywords = ["successfully converted", "converted to PDF"]
