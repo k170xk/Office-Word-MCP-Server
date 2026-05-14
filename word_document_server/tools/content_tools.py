@@ -8,13 +8,51 @@ import os
 import tempfile
 import urllib.request
 import urllib.parse
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension
 from word_document_server.utils.document_utils import find_and_replace_text, insert_header_near_text, insert_numbered_list_near_text, insert_line_or_paragraph_near_text, replace_paragraph_block_below_header, replace_block_between_manual_anchors
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
+
+
+def _coerce_table_rows(data: Optional[Any]) -> Tuple[Optional[List[List[Any]]], Optional[str]]:
+    """Normalize MCP table ``data`` to a list-of-rows, or return an error string.
+
+    MCP / model callers sometimes send ``data`` as a single JSON **string**.
+    Combined with::
+
+        rows = len(data)
+        row = data[i]
+
+    indexing the string yields one Unicode character per pseudo-row, filling only
+    the first column --- the classic corrupt table symptom.
+    """
+    if data is None:
+        return None, None
+    if isinstance(data, str):
+        return (
+            None,
+            "Invalid `data`: pass a JSON array of rows (...), "
+            "not one string value. A bare string expands into one-character "
+            "pseudo-rows (only column 1 gets text). Example: "
+            '[["HeadingA","HeadingB"],["row1-col1","row1-col2"],'
+            '["row2-col1","row2-col2"]]',
+        )
+    if not isinstance(data, (list, tuple)):
+        return (
+            None,
+            f"`data` must be a list of rows; got `{type(data).__name__}`. "
+            'Use [["h1","h2"],["r1","r2"]] for a 2x2 grid.',
+        )
+    normalized: List[List[Any]] = []
+    for row in data:
+        if isinstance(row, (list, tuple)):
+            normalized.append(list(row))
+        else:
+            normalized.append([row])
+    return normalized, None
 
 
 def _normalize_table_row(row_data: Any, cols: int) -> List[str]:
@@ -205,7 +243,9 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
         filename: Path to the Word document
         rows: Minimum number of rows (may grow if ``data`` contains more rows)
         cols: Number of columns in the table
-        data: Optional rows of cell values; short rows are padded with empty trailing cells
+        data: Optional rows as **list-of-lists**, e.g. ``[["A","B"],["c","d"]]``;
+            ``None`` skips filling. Passing a bare string fails fast (would otherwise produce
+            one garbled row per character).
     """
     filename = ensure_docx_extension(filename)
     
@@ -220,7 +260,10 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
     
     try:
         doc = Document(filename)
-        data_rows = len(data) if data else 0
+        coerced, coerce_err = _coerce_table_rows(data)
+        if coerce_err:
+            return coerce_err
+        data_rows = len(coerced) if coerced else 0
         effective_rows = max(rows, data_rows)
 
         table = doc.add_table(rows=effective_rows, cols=cols)
@@ -234,7 +277,7 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
 
         for i in range(effective_rows):
             row_vals = _normalize_table_row(
-                data[i] if data and i < len(data) else [],
+                coerced[i] if coerced and i < len(coerced) else [],
                 cols,
             )
             for j in range(cols):
@@ -263,7 +306,7 @@ async def append_table_rows(
     Args:
         filename: Path to the Word document
         table_index: 0-based index of the table in ``doc.tables``
-        data: One list per row; each row is padded/truncated to the table's column count
+        data: One list-of-cell-values per appended row (...). Passing a bare string is rejected (same rationale as ``add_table``).
 
     Rows that are shorter than the column count are padded with empty cells so Word does
     not leave inconsistent grid cells when callers omit trailing blanks.
@@ -277,7 +320,13 @@ async def append_table_rows(
     if not is_writeable:
         return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
 
-    if not data:
+    if data is None:
+        return "No rows provided; nothing appended."
+
+    coerced, coerce_err = _coerce_table_rows(data)
+    if coerce_err:
+        return coerce_err
+    if not coerced:
         return "No rows provided; nothing appended."
 
     try:
@@ -292,7 +341,7 @@ async def append_table_rows(
         cols = len(table.columns)
 
         appended = 0
-        for row_data in data:
+        for row_data in coerced:
             row = table.add_row()
             row_vals = _normalize_table_row(row_data, cols)
             for j in range(cols):

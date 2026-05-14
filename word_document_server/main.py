@@ -254,6 +254,8 @@ def register_tools():
 
         If ``data`` has more rows than ``rows``, the table is expanded so every data row is written.
         Short rows are padded with empty trailing cells so columns stay aligned.
+
+        ``data`` must be a JSON **array of arrays** (...), never a single string (that would corrupt the grid).
         """
         return content_tools.add_table(filename, rows, cols, data)
 
@@ -263,7 +265,9 @@ def register_tools():
         ),
     )
     def append_table_rows(filename: str, table_index: int, data: list[list[str]] = None):
-        """Append rows to an existing table (same column count); fills cells from ``data``."""
+        """Append rows to an existing table (same column count); fills cells from ``data``.
+
+        ``data`` must be an array-of-rows (...) like ``add_table``; not one string."""
         return content_tools.append_table_rows(filename, table_index, data)
 
     @mcp.tool(
