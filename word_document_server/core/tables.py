@@ -8,6 +8,11 @@ from docx.shared import RGBColor, Inches, Cm, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 
+from word_document_server.constants import (
+    TABLE_HEADER_FILL_DEFAULT,
+    TABLE_HEADER_TEXT_DEFAULT,
+)
+
 
 def set_cell_border(cell, **kwargs):
     """
@@ -220,37 +225,40 @@ def apply_alternating_row_shading(table, color1="FFFFFF", color2="F2F2F2"):
         return False
 
 
-def highlight_header_row(table, header_color="4472C4", text_color="FFFFFF"):
+def highlight_header_row(table, header_color=None, text_color=None):
     """
     Apply special shading to header row.
     
     Args:
         table: The table to format
-        header_color: Background color for header (hex string)
-        text_color: Text color for header (hex string)
+        header_color: Background color for header (hex string); defaults from ``TABLE_HEADER_FILL``
+        text_color: Text color for header (hex string); defaults from ``TABLE_HEADER_TEXT``
         
     Returns:
         True if successful, False otherwise
     """
+    bg = TABLE_HEADER_FILL_DEFAULT if header_color in (None, "") else header_color
+    fg = TABLE_HEADER_TEXT_DEFAULT if text_color in (None, "") else text_color
     try:
         if table.rows:
             for cell in table.rows[0].cells:
                 # Apply background shading
-                set_cell_shading(cell, fill_color=header_color)
+                set_cell_shading(cell, fill_color=bg)
                 
                 # Apply text formatting
                 for paragraph in cell.paragraphs:
                     for run in paragraph.runs:
                         run.bold = True
-                        if text_color and text_color != "auto":
-                            # Convert hex to RGB
+                        if fg and str(fg).lower() != "auto":
+                            # Convert hex to RGB (don't mutate fg across iterations)
                             try:
-                                text_color = text_color.lstrip('#')
-                                r = int(text_color[0:2], 16)
-                                g = int(text_color[2:4], 16)
-                                b = int(text_color[4:6], 16)
-                                run.font.color.rgb = RGBColor(r, g, b)
-                            except:
+                                fg_hex = str(fg).lstrip('#')
+                                if len(fg_hex) >= 6:
+                                    r = int(fg_hex[0:2], 16)
+                                    g = int(fg_hex[2:4], 16)
+                                    b = int(fg_hex[4:6], 16)
+                                    run.font.color.rgb = RGBColor(r, g, b)
+                            except Exception:
                                 pass  # Skip if color format is invalid
         return True
     except Exception as e:

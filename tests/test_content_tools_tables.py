@@ -60,3 +60,25 @@ async def test_append_table_rows_nested_ok(tmp_path):
     assert len(t.rows) == 2
     assert t.cell(1, 0).text == "a"
     assert t.cell(1, 1).text == "b"
+
+
+@pytest.mark.asyncio
+async def test_add_table_header_shading_default_brand_green(tmp_path):
+    doc_path = tmp_path / "t.docx"
+    await create_document(str(doc_path))
+    await content_tools.add_table(str(doc_path), rows=1, cols=2, data=[["A", "B"]])
+    doc = Document(str(doc_path))
+    cell_xml = doc.tables[-1].cell(0, 0)._tc.xml
+    assert "77C343" in cell_xml
+
+
+@pytest.mark.asyncio
+async def test_add_table_no_header_style_when_disabled(tmp_path):
+    doc_path = tmp_path / "t.docx"
+    await create_document(str(doc_path))
+    await content_tools.add_table(
+        str(doc_path), rows=1, cols=2, data=[["A", "B"]], style_header_row=False
+    )
+    doc = Document(str(doc_path))
+    cell_xml = doc.tables[-1].cell(0, 0)._tc.xml
+    assert "77C343" not in cell_xml

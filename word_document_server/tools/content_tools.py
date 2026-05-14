@@ -15,6 +15,8 @@ from docx.shared import Inches, Pt, RGBColor
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension
 from word_document_server.utils.document_utils import find_and_replace_text, insert_header_near_text, insert_numbered_list_near_text, insert_line_or_paragraph_near_text, replace_paragraph_block_below_header, replace_block_between_manual_anchors
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
+from word_document_server.core.tables import highlight_header_row
+from word_document_server.constants import TABLE_HEADER_FILL_DEFAULT, TABLE_HEADER_TEXT_DEFAULT
 
 
 def _coerce_table_rows(data: Optional[Any]) -> Tuple[Optional[List[List[Any]]], Optional[str]]:
@@ -236,7 +238,15 @@ async def add_paragraph(filename: str, text: str, style: Optional[str] = None,
         return f"Failed to add paragraph: {str(e)}"
 
 
-async def add_table(filename: str, rows: int, cols: int, data: Optional[List[List[str]]] = None) -> str:
+async def add_table(
+    filename: str,
+    rows: int,
+    cols: int,
+    data: Optional[List[List[str]]] = None,
+    style_header_row: bool = True,
+    header_fill_hex: Optional[str] = None,
+    header_text_hex: Optional[str] = None,
+) -> str:
     """Add a table to a Word document.
 
     Args:
@@ -246,6 +256,9 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
         data: Optional rows as **list-of-lists**, e.g. ``[["A","B"],["c","d"]]``;
             ``None`` skips filling. Passing a bare string fails fast (would otherwise produce
             one garbled row per character).
+        style_header_row: If ``True``, format row 0 with branded header fill/text (defaults from env)
+        header_fill_hex: Optional ``#RRGGBB`` cell fill for header row (overrides default)
+        header_text_hex: Optional ``#RRGGBB`` text color for header row (overrides default)
     """
     filename = ensure_docx_extension(filename)
     
@@ -286,6 +299,11 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
                 except Exception as e:
                     print(f"Warning: Error setting cell ({i},{j}): {str(e)}")
                     continue
+
+        if style_header_row and effective_rows >= 1:
+            fill = TABLE_HEADER_FILL_DEFAULT if header_fill_hex in (None, "") else header_fill_hex
+            text = TABLE_HEADER_TEXT_DEFAULT if header_text_hex in (None, "") else header_text_hex
+            highlight_header_row(table, fill, text)
 
         doc.save(filename)
         note = ""

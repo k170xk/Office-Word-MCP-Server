@@ -13,6 +13,7 @@ from docx.enum.style import WD_STYLE_TYPE
 
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension
 from word_document_server.core.styles import create_style
+from word_document_server.constants import TABLE_HEADER_FILL_DEFAULT, TABLE_HEADER_TEXT_DEFAULT
 from word_document_server.core.tables import (
     apply_table_style, set_cell_shading_by_position, apply_alternating_row_shading,
     highlight_header_row, merge_cells, merge_cells_horizontal, merge_cells_vertical,
@@ -338,15 +339,16 @@ async def apply_table_alternating_rows(filename: str, table_index: int,
         return f"Failed to apply alternating row shading: {str(e)}"
 
 
-async def highlight_table_header(filename: str, table_index: int, 
-                               header_color: str = "4472C4", text_color: str = "FFFFFF") -> str:
+async def highlight_table_header(filename: str, table_index: int,
+                               header_color: Optional[str] = None,
+                               text_color: Optional[str] = None) -> str:
     """Apply special highlighting to table header row.
     
     Args:
         filename: Path to the Word document
         table_index: Index of the table (0-based)
-        header_color: Background color for header (hex string, default blue)
-        text_color: Text color for header (hex string, default white)
+        header_color: Background color for header (hex string); defaults per ``TABLE_HEADER_FILL``
+        text_color: Text color for header (hex string); defaults per ``TABLE_HEADER_TEXT``
     """
     filename = ensure_docx_extension(filename)
     
@@ -373,8 +375,11 @@ async def highlight_table_header(filename: str, table_index: int,
         
         table = doc.tables[table_index]
         
+        hc = TABLE_HEADER_FILL_DEFAULT if header_color in (None, "") else header_color
+        tc = TABLE_HEADER_TEXT_DEFAULT if text_color in (None, "") else text_color
+        
         # Apply header highlighting
-        success = highlight_header_row(table, header_color, text_color)
+        success = highlight_header_row(table, hc, tc)
         
         if success:
             doc.save(filename)

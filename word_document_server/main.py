@@ -26,6 +26,7 @@ from word_document_server.tools import (
 )
 from word_document_server.tools.content_tools import replace_paragraph_block_below_header_tool
 from word_document_server.tools.content_tools import replace_block_between_manual_anchors_tool
+from word_document_server.constants import TABLE_HEADER_FILL_DEFAULT, TABLE_HEADER_TEXT_DEFAULT
 
 def get_transport_config():
     """
@@ -249,15 +250,34 @@ def register_tools():
             title="Add Table",
         ),
     )
-    def add_table(filename: str, rows: int, cols: int, data: list[list[str]] = None):
+    def add_table(
+        filename: str,
+        rows: int,
+        cols: int,
+        data: list[list[str]] = None,
+        style_header_row: bool = True,
+        header_fill_hex: str = None,
+        header_text_hex: str = None,
+    ):
         """Add a table to a Word document.
 
         If ``data`` has more rows than ``rows``, the table is expanded so every data row is written.
         Short rows are padded with empty trailing cells so columns stay aligned.
 
         ``data`` must be a JSON **array of arrays** (...), never a single string (that would corrupt the grid).
+
+        By default row 0 is styled as a branded header (... env ``TABLE_HEADER_FILL`` /
+        ``TABLE_HEADER_TEXT``, default fill ``#77c343``); set ``style_header_row=false`` for a plain grid.
         """
-        return content_tools.add_table(filename, rows, cols, data)
+        return content_tools.add_table(
+            filename,
+            rows,
+            cols,
+            data,
+            style_header_row=style_header_row,
+            header_fill_hex=header_fill_hex,
+            header_text_hex=header_text_hex,
+        )
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -364,9 +384,13 @@ def register_tools():
             title="Highlight Table Header",
         ),
     )
-    def highlight_table_header(filename: str, table_index: int,
-                             header_color: str = "4472C4", text_color: str = "FFFFFF"):
-        """Apply special highlighting to table header row."""
+    def highlight_table_header(
+        filename: str,
+        table_index: int,
+        header_color: str = TABLE_HEADER_FILL_DEFAULT,
+        text_color: str = TABLE_HEADER_TEXT_DEFAULT,
+    ):
+        """Apply special highlighting to table header row (defaults match branded ``TABLE_HEADER_*`` env)."""
         return format_tools.highlight_table_header(filename, table_index, header_color, text_color)
     
     # Cell merging tools
