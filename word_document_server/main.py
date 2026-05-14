@@ -148,9 +148,9 @@ def register_tools():
             readOnlyHint=True,
         ),
     )
-    def list_available_documents(directory: str = "."):
-        """List all .docx files in the specified directory."""
-        return document_tools.list_available_documents(directory)
+    def list_available_documents(directory: str = None, workspace: str = None):
+        """List .docx in storage root, or inside one workspace prefix (recommended for isolation)."""
+        return document_tools.list_available_documents(directory, workspace)
     
     @mcp.tool(
         annotations=ToolAnnotations(

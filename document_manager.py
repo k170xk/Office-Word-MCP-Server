@@ -4,9 +4,17 @@ Downloads documents before editing, uploads after saving.
 """
 
 import os
+import hashlib
 import tempfile
 from typing import Optional
+
 from storage_adapter import get_storage_adapter
+
+
+def _temp_file_for_storage_key(temp_dir: str, storage_key: str) -> str:
+    digest = hashlib.sha256(storage_key.encode("utf-8")).hexdigest()[:24]
+    base = storage_key.replace("\\", "/").split("/")[-1]
+    return os.path.join(temp_dir, f"edit_{digest}_{base}")
 
 
 class DocumentManager:
@@ -16,32 +24,28 @@ class DocumentManager:
         self.storage = get_storage_adapter()
         self.temp_dir = tempfile.mkdtemp(prefix='doc_edit_')
     
-    def get_local_path(self, filename: str, create_if_missing: bool = False) -> str:
+    def get_local_path(self, storage_key: str, create_if_missing: bool = False) -> str:
         """
-        Get local file path for editing.
-        Downloads from storage if needed.
+        Resolve a logical storage document key (e.g. ``workspace/note.docx``) to an
+        editable temp file path, downloading when the object exists remotely.
         
         Args:
-            filename: Document filename
-            create_if_missing: If True, create empty file if it doesn't exist
-        
-        Returns:
-            Local file path for editing
+            storage_key: Normalized POSIX path under DISK_PATH (may include workspaces)
+            create_if_missing: If True and key missing in storage, return new temp path
         """
-        # Check if document exists in storage
-        if self.storage.document_exists(filename):
-            # Download to temp location for editing
-            local_path = os.path.join(self.temp_dir, filename)
-            self.storage.download_document(filename, local_path)
+        local_path = _temp_file_for_storage_key(self.temp_dir, storage_key)
+        dirname = os.path.dirname(local_path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+
+        if self.storage.document_exists(storage_key):
+            self.storage.download_document(storage_key, local_path)
             return local_path
-        elif create_if_missing:
-            # Create new document in temp location
-            local_path = os.path.join(self.temp_dir, filename)
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+        if create_if_missing:
             return local_path
-        else:
-            raise FileNotFoundError(f"Document {filename} not found")
+
+        raise FileNotFoundError(f"Document {storage_key} not found")
     
     def save_document(self, local_path: str, filename: str) -> str:
         """
@@ -62,6 +66,16 @@ class DocumentManager:
         """Get the public URL for a document."""
         return self.storage.get_document_url(filename)
     
+    def cleanup_temp_path(self, local_path: Optional[str] = None) -> None:
+        """Remove a single temp editing file produced by ``get_local_path``."""
+        if local_path and os.path.isfile(local_path) and os.path.abspath(local_path).startswith(
+            os.path.abspath(self.temp_dir) + os.sep
+        ):
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
+
     def cleanup_temp(self, filename: Optional[str] = None):
         """Clean up temporary files."""
         if filename:
@@ -101,6 +115,7 @@ def with_storage_sync(tool_func):
             return await tool_func(*args, **kwargs)
         
         manager = get_document_manager()
+        local_path: Optional[str] = None
         
         try:
             # Get local path (downloads if exists, creates if new)
@@ -118,7 +133,7 @@ def with_storage_sync(tool_func):
             
             # Upload back to storage (if document was modified)
             if os.path.exists(local_path):
-                doc_url = manager.save_document(local_path, os.path.basename(filename))
+                doc_url = manager.save_document(local_path, filename)
                 # Enhance result with URL
                 if isinstance(result, str):
                     result = f"{result}\n\nDocument URL: {doc_url}\nDownload URL: {doc_url}"
@@ -130,9 +145,7 @@ def with_storage_sync(tool_func):
         except Exception as e:
             return f"Error: {str(e)}"
         finally:
-            # Cleanup temp file
-            if filename:
-                manager.cleanup_temp(os.path.basename(filename))
-    
+            manager.cleanup_temp_path(local_path)
+
     return wrapper
 

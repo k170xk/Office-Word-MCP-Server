@@ -10,6 +10,7 @@ from docx import Document
 from word_document_server.utils.file_utils import check_file_writeable, ensure_docx_extension, create_document_copy
 from word_document_server.utils.document_utils import get_document_properties, extract_document_text, get_document_structure, get_document_xml, insert_header_near_text, insert_line_or_paragraph_near_text
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
+from word_document_server.storage_paths import validate_workspace_segment
 from word_document_server.tools.template_tools import get_template_path, template_exists
 from docx.shared import Pt
 
@@ -244,40 +245,50 @@ async def get_document_outline(filename: str) -> str:
     return json.dumps(structure, indent=2)
 
 
-async def list_available_documents(directory: Optional[str] = None) -> str:
-    """List all .docx files in the storage directory (templates and created documents).
-    
+async def list_available_documents(directory: Optional[str] = None, workspace: Optional[str] = None) -> str:
+    """List .docx files in storage.
+
+    Flat files appear at disk root (legacy). Prefer ``workspace`` with a tenant / project ID so each
+    caller only lists its own subdirectory (e.g. workspace ``usr_abc123`` maps to ``DISK/usr_abc123``).
+
     Args:
-        directory: Optional directory path. If not provided, uses the storage directory from environment.
+        directory: Optional override folder (advanced). Uses ``"."`` sentinel as “default storage root”.
+        workspace: Single folder name under persistent storage; alphanumeric + hyphen/underscore only.
     """
     try:
-        # Get the storage directory from environment (Render Disk or local)
-        if directory is None:
-            storage_dir = os.getenv('DISK_PATH', os.getenv('DOCUMENTS_DIR', '/mnt/disk/documents'))
+        base = os.getenv('DISK_PATH', os.getenv('DOCUMENTS_DIR', '/mnt/disk/documents'))
+
+        if workspace is not None and str(workspace).strip() != "":
+            ws = validate_workspace_segment(workspace)
+            storage_dir = os.path.join(base, ws)
+            prefix = f"{ws}/"
+        elif directory in (None, "", "."):
+            storage_dir = base
+            prefix = ""
         else:
             storage_dir = directory
-        
+            prefix = ""
+
         if not os.path.exists(storage_dir):
             return f"Storage directory {storage_dir} does not exist"
-        
-        # List only .docx files (templates and created documents)
-        all_files = os.listdir(storage_dir)
-        docx_files = [f for f in all_files if f.endswith('.docx')]
-        
-        if not docx_files:
+
+        names = sorted(f for f in os.listdir(storage_dir) if f.endswith('.docx'))
+        if not names:
             return f"No Word documents found in {storage_dir}"
-        
-        docx_files.sort()
-        result = f"Found {len(docx_files)} Word document(s) in {storage_dir}:\n"
-        for file in docx_files:
-            file_path = os.path.join(storage_dir, file)
+
+        result = f"Found {len(names)} Word document(s) in {storage_dir}:\n"
+        for filen in names:
+            rel = f"{prefix}{filen}" if prefix else filen
+            file_path = os.path.join(storage_dir, filen)
             try:
-                size = os.path.getsize(file_path) / 1024  # KB
-                result += f"- {file} ({size:.2f} KB)\n"
-            except:
-                result += f"- {file}\n"
-        
+                size = os.path.getsize(file_path) / 1024
+                result += f"- {rel} ({size:.2f} KB)\n"
+            except OSError:
+                result += f"- {rel}\n"
+
         return result
+    except ValueError as e:
+        return f"Invalid workspace: {str(e)}"
     except Exception as e:
         return f"Failed to list documents: {str(e)}"
 

@@ -10,7 +10,7 @@ import json
 import asyncio
 import hmac
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 import sys
 import inspect
 
@@ -28,6 +28,8 @@ from word_document_server.tools import (
     comment_tools
 )
 from word_document_server.tools import template_tools, document_formatting_tools
+from word_document_server.storage_paths import normalize_storage_document_key
+
 from document_manager import get_document_manager
 from storage_adapter import get_storage_adapter
 
@@ -35,9 +37,9 @@ from storage_adapter import get_storage_adapter
 DOCUMENTS_DIR = os.getenv('DOCUMENTS_DIR', './documents')
 BASE_URL = os.getenv('BASE_URL', '')  # Will be set from Render service URL
 
-# Shared secret for HTTP access. Accepts Bearer token or X-API-Key header.
-# Leave unset locally for open access; set on Render to protect MCP, downloads, uploads.
+# Optional HTTP gate: set MCP_API_KEY and MCP_REQUIRE_API_KEY=true to enforce Bearer / X-API-Key.
 EXPECTED_API_KEY = os.getenv('MCP_API_KEY', '').strip()
+MCP_REQUIRE_API_KEY = os.getenv('MCP_REQUIRE_API_KEY', '').strip().lower() in ('1', 'true', 'yes')
 
 # Ensure documents directory exists
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
@@ -124,6 +126,8 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
     """HTTP handler for MCP JSON-RPC requests and document serving."""
     
     def _client_api_key_ok(self) -> bool:
+        if not MCP_REQUIRE_API_KEY:
+            return True
         if not EXPECTED_API_KEY:
             return True
         auth = self.headers.get('Authorization', '').strip()
@@ -311,40 +315,45 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
             elif method == 'tools/call':
                 tool_name = params.get('name')
                 arguments = params.get('arguments', {})
-                
+
                 if tool_name not in TOOL_REGISTRY:
                     return {
                         "jsonrpc": "2.0",
                         "id": request_id,
                         "error": {
                             "code": -32601,
-                            "message": f"Tool not found: {tool_name}"
-                        }
+                            "message": f"Tool not found: {tool_name}",
+                        },
                     }
-                
+
                 tool_func = TOOL_REGISTRY[tool_name]
-                
-                # Use storage adapter for document operations
                 manager = get_document_manager()
-                storage = get_storage_adapter()
-                
-                # Handle filename parameters - download from storage if exists
-                original_filename = None
+
+                storage_key = None
                 local_path = None
-                
+                source_local_path = None
+
                 if 'filename' in arguments:
-                    original_filename = arguments['filename']
-                    # Extract just the filename (remove path if present)
-                    filename_base = os.path.basename(original_filename)
-                    
-                    # Check if document exists in storage
+                    try:
+                        storage_key = normalize_storage_document_key(arguments['filename'])
+                    except ValueError as e:
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "error": {"code": -32602, "message": str(e)},
+                        }
+
                     create_if_missing = 'create' in tool_name or 'add' in tool_name
                     try:
-                        local_path = manager.get_local_path(filename_base, create_if_missing=create_if_missing)
+                        local_path = manager.get_local_path(
+                            storage_key, create_if_missing=create_if_missing
+                        )
                         arguments['filename'] = local_path
                     except FileNotFoundError:
                         if create_if_missing:
-                            local_path = manager.get_local_path(filename_base, create_if_missing=True)
+                            local_path = manager.get_local_path(
+                                storage_key, create_if_missing=True
+                            )
                             arguments['filename'] = local_path
                         else:
                             return {
@@ -352,14 +361,25 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                                 "id": request_id,
                                 "error": {
                                     "code": -32602,
-                                    "message": f"Document {filename_base} not found"
-                                }
+                                    "message": f"Document {storage_key} not found",
+                                },
                             }
-                
+
                 if 'source_filename' in arguments:
-                    source_filename_base = os.path.basename(arguments['source_filename'])
                     try:
-                        source_local_path = manager.get_local_path(source_filename_base, create_if_missing=False)
+                        source_storage_key = normalize_storage_document_key(
+                            arguments['source_filename']
+                        )
+                    except ValueError as e:
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "error": {"code": -32602, "message": str(e)},
+                        }
+                    try:
+                        source_local_path = manager.get_local_path(
+                            source_storage_key, create_if_missing=False
+                        )
                         arguments['source_filename'] = source_local_path
                     except FileNotFoundError:
                         return {
@@ -367,60 +387,43 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
                             "id": request_id,
                             "error": {
                                 "code": -32602,
-                                "message": f"Source document {source_filename_base} not found"
-                            }
+                                "message": f"Source document {source_storage_key} not found",
+                            },
                         }
-                
+
+                enhanced_result = ""
                 try:
-                    # Call the tool
                     if asyncio.iscoroutinefunction(tool_func):
                         result = await tool_func(**arguments)
                     else:
                         result = tool_func(**arguments)
-                    
-                    # Upload document back to storage if it was modified
-                    if local_path and os.path.exists(local_path):
-                        # Get the original filename (before we changed it to local_path)
-                        if original_filename:
-                            filename_base = os.path.basename(original_filename)
-                        else:
-                            # Extract from arguments
-                            filename_base = os.path.basename(arguments.get('filename', ''))
-                        
-                        # Ensure .docx extension
-                        if filename_base and not filename_base.endswith('.docx'):
-                            filename_base = f"{filename_base}.docx"
-                        
-                        if filename_base:
-                            # Save to storage
-                            doc_url = manager.save_document(local_path, filename_base)
-                            # Enhance result with URL
-                            if isinstance(result, str):
-                                from urllib.parse import quote
-                                # URL encode the filename for the download URL
-                                encoded_filename = quote(filename_base)
-                                download_url = f"{BASE_URL or 'https://office-word-mcp.onrender.com'}/documents/{encoded_filename}"
-                                result = f"{result}\n\nDocument saved: {filename_base}\nDownload URL: {download_url}"
-                    
+
+                    if local_path and os.path.isfile(local_path) and storage_key:
+                        manager.save_document(local_path, storage_key)
+                        if isinstance(result, str):
+                            encoded_key = quote(storage_key, safe='')
+                            download_url = (
+                                f"{BASE_URL or 'https://office-word-mcp.onrender.com'}"
+                                f"/documents/{encoded_key}"
+                            )
+                            result = (
+                                f"{result}\n\nDocument saved: {storage_key}"
+                                f"\nDownload URL: {download_url}"
+                            )
+
                     enhanced_result = str(result)
                 finally:
-                    # Cleanup temp files
-                    if local_path and os.path.exists(local_path):
-                        manager.cleanup_temp(os.path.basename(local_path))
-                
+                    for pth in (local_path, source_local_path):
+                        manager.cleanup_temp_path(pth)
+
                 return {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": enhanced_result
-                            }
-                        ]
-                    }
+                        "content": [{"type": "text", "text": enhanced_result}]
+                    },
                 }
-            
+
             else:
                 return {
                     "jsonrpc": "2.0",
@@ -543,44 +546,48 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
         
         return result
     
-    def serve_document(self, filename: str):
-        """Serve a document file from storage."""
+    def serve_document(self, raw_path_fragment: str):
+        """Serve a document file from storage using a validated relative storage key."""
         from urllib.parse import unquote
-        
-        # URL decode the filename (handle %20 for spaces, etc.)
-        filename = unquote(filename)
-        # Security: prevent directory traversal
-        filename = os.path.basename(filename)
-        
+
+        raw_decoded = unquote(raw_path_fragment or "")
+        try:
+            storage_key = normalize_storage_document_key(raw_decoded)
+        except ValueError as e:
+            self.send_error(400, str(e))
+            return
+
         try:
             storage = get_storage_adapter()
             manager = get_document_manager()
-            
-            # Check if document exists in storage first
-            if not storage.document_exists(filename):
-                self.send_error(404, f"Document '{filename}' not found")
+
+            if not storage.document_exists(storage_key):
+                self.send_error(404, f"Document '{storage_key}' not found")
                 return
-            
-            # Download from storage to temp location
-            local_path = manager.get_local_path(filename, create_if_missing=False)
-            
-            if not os.path.exists(local_path):
-                self.send_error(404, f"Document '{filename}' not found on disk")
+
+            local_path = manager.get_local_path(storage_key, create_if_missing=False)
+
+            if not os.path.isfile(local_path):
+                self.send_error(404, f"Document '{storage_key}' not found on disk")
                 return
-            
+
             with open(local_path, 'rb') as f:
                 content = f.read()
-            
+
+            display_name = storage_key.replace("\\", "/").split("/")[-1]
+
             self.send_response(200)
-            self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header(
+                'Content-Type',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            )
+            self.send_header('Content-Disposition', f'attachment; filename="{display_name}"')
             self.send_header('Content-Length', str(len(content)))
             self.send_cors_headers()
             self.end_headers()
             self.wfile.write(content)
-            
-            # Cleanup temp file
-            manager.cleanup_temp(filename)
+
+            manager.cleanup_temp_path(local_path)
         except FileNotFoundError as e:
             self.send_error(404, f"Document not found: {str(e)}")
         except Exception as e:
@@ -694,12 +701,12 @@ def run_http_server():
     print(f"Base URL: {BASE_URL}")
     print(f"MCP endpoint: http://{host}:{port}/mcp/stream")
     print(f"Documents endpoint: http://{host}:{port}/documents/")
-    if EXPECTED_API_KEY:
-        print("MCP_HTTP_AUTH: MCP_API_KEY is set — MCP, /documents/, template routes require Bearer or X-API-Key")
+    if MCP_REQUIRE_API_KEY and EXPECTED_API_KEY:
+        print("HTTP auth: MCP_REQUIRE_API_KEY=1 — require Bearer/X-Api-Key matching MCP_API_KEY")
+    elif MCP_REQUIRE_API_KEY:
+        print("HTTP auth: MCP_REQUIRE_API_KEY set but MCP_API_KEY empty — ignoring auth gate")
     else:
-        print("MCP_HTTP_AUTH: MCP_API_KEY not set — all HTTP routes except /health are public")
-        if os.getenv('RENDER'):
-            print("WARNING: Running on Render without MCP_API_KEY — anyone may call tools or download documents")
+        print("HTTP auth: off (set MCP_REQUIRE_API_KEY=true plus MCP_API_KEY to enable)")
     
     try:
         server.serve_forever()

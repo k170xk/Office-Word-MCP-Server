@@ -114,10 +114,14 @@ class StorageAdapter:
         elif self.storage_type == 'disk':
             source_path = os.path.join(self.disk_path, filename)
             if local_path is None:
-                local_path = os.path.join(tempfile.gettempdir(), filename)
+                local_path = os.path.join(tempfile.gettempdir(), os.path.basename(filename))
             
             if not os.path.exists(source_path):
                 raise FileNotFoundError(f"Document {filename} not found")
+
+            dd = os.path.dirname(local_path)
+            if dd:
+                os.makedirs(dd, exist_ok=True)
             
             shutil.copy2(source_path, local_path)
             return local_path
@@ -147,6 +151,9 @@ class StorageAdapter:
         
         elif self.storage_type == 'disk':
             dest_path = os.path.join(self.disk_path, filename)
+            dd = os.path.dirname(dest_path)
+            if dd:
+                os.makedirs(dd, exist_ok=True)
             shutil.copy2(local_path, dest_path)
             if self.base_url:
                 return f"{self.base_url}/documents/{filename}"
@@ -154,6 +161,9 @@ class StorageAdapter:
         
         else:  # local
             dest_path = os.path.join(self.local_path, filename)
+            dd = os.path.dirname(dest_path)
+            if dd:
+                os.makedirs(dd, exist_ok=True)
             shutil.copy2(local_path, dest_path)
             if self.base_url:
                 return f"{self.base_url}/documents/{filename}"
