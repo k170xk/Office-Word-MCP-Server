@@ -17,6 +17,29 @@ from word_document_server.utils.document_utils import find_and_replace_text, ins
 from word_document_server.core.styles import ensure_heading_style, ensure_table_style
 
 
+def _normalize_table_row(row_data: Any, cols: int) -> List[str]:
+    """Expand/pad one data row to exactly ``cols`` string values for table cells."""
+    if row_data is None:
+        cells: List[Any] = []
+    elif isinstance(row_data, list):
+        cells = list(row_data)
+    elif isinstance(row_data, str):
+        cells = [row_data]
+    else:
+        cells = [row_data]
+    while len(cells) < cols:
+        cells.append("")
+    result: List[str] = []
+    for k in range(cols):
+        cell_text = cells[k]
+        if cell_text is None:
+            result.append("")
+        else:
+            s = str(cell_text)
+            result.append(s.strip() if s else "")
+    return result
+
+
 async def add_heading(filename: str, text: str, level: int = 1,
                       font_name: Optional[str] = None, font_size: Optional[int] = None,
                       bold: Optional[bool] = None, italic: Optional[bool] = None,
@@ -177,12 +200,12 @@ async def add_paragraph(filename: str, text: str, style: Optional[str] = None,
 
 async def add_table(filename: str, rows: int, cols: int, data: Optional[List[List[str]]] = None) -> str:
     """Add a table to a Word document.
-    
+
     Args:
         filename: Path to the Word document
-        rows: Number of rows in the table
+        rows: Minimum number of rows (may grow if ``data`` contains more rows)
         cols: Number of columns in the table
-        data: Optional 2D array of data to fill the table
+        data: Optional rows of cell values; short rows are padded with empty trailing cells
     """
     filename = ensure_docx_extension(filename)
     
@@ -197,64 +220,95 @@ async def add_table(filename: str, rows: int, cols: int, data: Optional[List[Lis
     
     try:
         doc = Document(filename)
-        table = doc.add_table(rows=rows, cols=cols)
-        
+        data_rows = len(data) if data else 0
+        effective_rows = max(rows, data_rows)
+
+        table = doc.add_table(rows=effective_rows, cols=cols)
+
         # Try to set the table style
         try:
             table.style = 'Table Grid'
         except KeyError:
             # If style doesn't exist, add basic borders
             pass
-        
-        # Fill table with data if provided
-        if data:
-            # Handle both list of lists and other formats
-            if isinstance(data, list) and len(data) > 0:
-                for i, row_data in enumerate(data):
-                    if i >= rows:
-                        break
-                    
-                    # Ensure row_data is a list
-                    if not isinstance(row_data, list):
-                        # If it's a string, convert to list with one element
-                        row_data = [row_data] if isinstance(row_data, str) else [str(row_data)]
-                    
-                    # Ensure we have enough columns
-                    while len(row_data) < cols:
-                        row_data.append("")
-                    
-                    for j, cell_text in enumerate(row_data):
-                        if j >= cols:
-                            break
-                        try:
-                            # Get the cell
-                            cell = table.cell(i, j)
-                            
-                            # Convert cell_text to string, handling None and empty values
-                            if cell_text is None:
-                                text_to_add = ""
-                            else:
-                                text_to_add = str(cell_text).strip() if str(cell_text) else ""
-                            
-                            # Use the simple .text property which is the standard way
-                            # This replaces all content in the cell and handles full strings correctly
-                            cell.text = text_to_add
-                            
-                            # Debug: log if text seems truncated (optional, can remove later)
-                            if text_to_add and len(text_to_add) > 50:
-                                print(f"Cell ({i},{j}) filled with {len(text_to_add)} characters")
-                                
-                        except Exception as e:
-                            # If there's an error with a specific cell, log and continue
-                            print(f"Warning: Error setting cell ({i},{j}): {str(e)}")
-                            import traceback
-                            traceback.print_exc()
-                            continue
-        
+
+        for i in range(effective_rows):
+            row_vals = _normalize_table_row(
+                data[i] if data and i < len(data) else [],
+                cols,
+            )
+            for j in range(cols):
+                try:
+                    table.cell(i, j).text = row_vals[j]
+                except Exception as e:
+                    print(f"Warning: Error setting cell ({i},{j}): {str(e)}")
+                    continue
+
         doc.save(filename)
-        return f"Table ({rows}x{cols}) added to {filename}"
+        note = ""
+        if data_rows > rows:
+            note = f" (expanded to {effective_rows} rows to fit provided data)"
+        return f"Table ({effective_rows}x{cols}) added to {filename}{note}"
     except Exception as e:
         return f"Failed to add table: {str(e)}"
+
+
+async def append_table_rows(
+    filename: str,
+    table_index: int,
+    data: Optional[List[Any]] = None,
+) -> str:
+    """Append new rows to an existing table and fill cells.
+
+    Args:
+        filename: Path to the Word document
+        table_index: 0-based index of the table in ``doc.tables``
+        data: One list per row; each row is padded/truncated to the table's column count
+
+    Rows that are shorter than the column count are padded with empty cells so Word does
+    not leave inconsistent grid cells when callers omit trailing blanks.
+    """
+    filename = ensure_docx_extension(filename)
+
+    if not os.path.exists(filename):
+        return f"Document {filename} does not exist"
+
+    is_writeable, error_message = check_file_writeable(filename)
+    if not is_writeable:
+        return f"Cannot modify document: {error_message}. Consider creating a copy first or creating a new document."
+
+    if not data:
+        return "No rows provided; nothing appended."
+
+    try:
+        doc = Document(filename)
+        if table_index < 0 or table_index >= len(doc.tables):
+            return (
+                f"Invalid table index. Document has {len(doc.tables)} tables "
+                f"(0-{len(doc.tables) - 1})."
+            )
+
+        table = doc.tables[table_index]
+        cols = len(table.columns)
+
+        appended = 0
+        for row_data in data:
+            row = table.add_row()
+            row_vals = _normalize_table_row(row_data, cols)
+            for j in range(cols):
+                try:
+                    row.cells[j].text = row_vals[j]
+                except Exception as e:
+                    print(f"Warning: Error setting appended cell ({appended},{j}): {str(e)}")
+            appended += 1
+
+        doc.save(filename)
+        return (
+            f"Appended {appended} row(s) to table {table_index} in {filename} "
+            f"(now {len(table.rows)} rows x {cols} cols)."
+        )
+    except Exception as e:
+        return f"Failed to append table rows: {str(e)}"
 
 
 async def add_picture(filename: str, image_path: str, width: Optional[float] = None) -> str:

@@ -60,6 +60,7 @@ def build_tool_registry():
         'add_heading': content_tools.add_heading,
         'add_picture': content_tools.add_picture,
         'add_table': content_tools.add_table,
+        'append_table_rows': content_tools.append_table_rows,
         'add_page_break': content_tools.add_page_break,
         'delete_paragraph': content_tools.delete_paragraph,
         'search_and_replace': content_tools.search_and_replace,

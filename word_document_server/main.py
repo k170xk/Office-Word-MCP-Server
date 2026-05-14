@@ -250,9 +250,22 @@ def register_tools():
         ),
     )
     def add_table(filename: str, rows: int, cols: int, data: list[list[str]] = None):
-        """Add a table to a Word document."""
+        """Add a table to a Word document.
+
+        If ``data`` has more rows than ``rows``, the table is expanded so every data row is written.
+        Short rows are padded with empty trailing cells so columns stay aligned.
+        """
         return content_tools.add_table(filename, rows, cols, data)
-    
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Append Table Rows",
+        ),
+    )
+    def append_table_rows(filename: str, table_index: int, data: list[list[str]] = None):
+        """Append rows to an existing table (same column count); fills cells from ``data``."""
+        return content_tools.append_table_rows(filename, table_index, data)
+
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Add Page Break",
